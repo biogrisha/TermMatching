@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Congruence/Congruence.vcxproj" Id="226c8c64-3766-413e-be76-21080b883ffd" />
+</Solution>
