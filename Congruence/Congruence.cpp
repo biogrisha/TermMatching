@@ -13,6 +13,7 @@ struct Term
     std::vector<std::unique_ptr<Term>> children;
     Term* parent = nullptr;
     bool duplicate = false;
+    bool templ = false;
 };
 
 class Parser
@@ -24,6 +25,10 @@ public:
         main_term = std::make_unique<Term>();
         parent_term = main_term.get();
         parse();
+        for (auto& child : main_term->children)
+        {
+            child->parent = nullptr;
+        }
         return std::move(main_term->children);
     }
 
@@ -69,7 +74,7 @@ public:
         // consume label
         while (pos < str_to_parse.size())
         {
-            if (!isalpha(str_to_parse[pos]) && !isdigit(str_to_parse[pos]) && str_to_parse[pos] != '*' && str_to_parse[pos] != '+' && str_to_parse[pos] != '`' && str_to_parse[pos] != '~')
+            if (!isalpha(str_to_parse[pos]) && !isdigit(str_to_parse[pos]) && str_to_parse[pos] != '*' && str_to_parse[pos] != '+' && str_to_parse[pos] != '~')
             {
                 break;
             }
@@ -156,8 +161,8 @@ struct EquivalenceClass
     Term* representative = nullptr;
     std::unordered_set<Term*> preds;
     EquivalenceClass* parent_eq = nullptr;
-    int templ_applyed = false;
     std::vector<EquivalenceClass*> representatives;
+    std::unordered_set<int> identitites_hold;
 };
 
 void collectNodes(const std::vector<std::unique_ptr<Term>>& terms, std::map<std::string, EquivalenceClass>& out)
@@ -180,7 +185,10 @@ void collectNodes(const std::vector<std::unique_ptr<Term>>& terms, std::map<std:
             auto pair = out.emplace(term->term_str, EquivalenceClass());
             pair.first->second.representative = term.get();
             pair.first->second.representatives.push_back(&pair.first->second);
-            pair.first->second.preds.insert(term->parent);
+            if (term->parent)
+            {
+                pair.first->second.preds.insert(term->parent);
+            }
         }
     }
 }
@@ -203,7 +211,10 @@ void collectNode(Term* term, std::map<std::string, EquivalenceClass>& out)
         auto pair = out.emplace(term->term_str, EquivalenceClass());
         pair.first->second.representative = term;
         pair.first->second.representatives.push_back(&pair.first->second);
-        pair.first->second.preds.insert(term->parent);
+        if(term->parent)
+        {
+            pair.first->second.preds.insert(term->parent);
+        }
     }
 }
 
@@ -289,7 +300,7 @@ bool merge(const std::string& lhs, const std::string& rhs, std::map<std::string,
     return true;
 }
 
-bool match(Term* templ, Term* node, std::map<std::string, Term*>& args)
+bool match(Term* templ, Term* node, std::map<std::string, Term*>& args, std::map<std::string, EquivalenceClass>& nodes)
 {
     if (templ->label[0] == '~')
     {
@@ -297,8 +308,11 @@ bool match(Term* templ, Term* node, std::map<std::string, Term*>& args)
         if (arg == args.end())
         {
             args.emplace(templ->label, node);
+            return true;
         }
-        else if (arg->second->term_str != node->term_str)
+        auto cl_arg = find(nodes, arg->second->term_str);
+        auto cl_node = find(nodes, node->term_str);
+        if (!cl_arg || cl_arg != cl_node)
         {
             return false;
         }
@@ -308,13 +322,9 @@ bool match(Term* templ, Term* node, std::map<std::string, Term*>& args)
     {
         return false;
     }
-    if (node->children.size() != templ->children.size())
-    {
-        return false;
-    }
     for (int i = 0; i < node->children.size(); ++i)
     {
-        if (!match(templ->children[i].get(), node->children[i].get(), args))
+        if (!match(templ->children[i].get(), node->children[i].get(), args, nodes))
         {
             return false;
         }
@@ -322,7 +332,13 @@ bool match(Term* templ, Term* node, std::map<std::string, Term*>& args)
     return true;
 }
 
-void rewrite(Term* templ_to, const std::map<std::string, Term*>& args, std::string& res)
+struct Arg
+{
+    Term* term = nullptr;
+    int node_id = 0;
+};
+
+void rewrite(Term* templ_to, std::map<std::string, Arg>& args, std::string& res)
 {
     if (templ_to->label[0] == '~')
     {
@@ -333,7 +349,7 @@ void rewrite(Term* templ_to, const std::map<std::string, Term*>& args, std::stri
         }
         else
         {
-            res += arg->second->term_str;
+            res += arg->second.term->term_str;
         }
         return;
     }
@@ -349,39 +365,6 @@ void rewrite(Term* templ_to, const std::map<std::string, Term*>& args, std::stri
         res.back() = ')';
     }
 }
-
-void generateIdentities(const Identity& templ, std::map<std::string, EquivalenceClass>& nodes, std::vector<std::unique_ptr<Term>>& terms, int num_templ)
-{
-    Parser pr;
-    std::string all_terms;
-    all_terms += templ.lhs + "," + templ.rhs;
-    auto res = pr.start(all_terms);
-    std::map<std::string, std::string> identities;
-    for (auto& node : nodes)
-    {
-        if (node.second.templ_applyed == num_templ)
-        {
-            continue;
-        }
-        node.second.templ_applyed++;
-        std::map<std::string, Term*> args;
-        if (match(res[0].get(), node.second.representative, args))
-        {
-            auto pair = identities.emplace(node.second.representative->term_str, "");
-            rewrite(res[1].get(), args, pair.first->second);
-            Parser pr2;
-            auto new_term = pr2.start(pair.first->second);
-            terms.push_back(std::move(new_term.back()));
-            collectNode(terms.back().get(), nodes);
-        }
-    }
-    removeDuplicatePreds(nodes);
-    for (auto pair : identities)
-    {
-        merge(pair.first, pair.second, nodes);
-    }
-}
-
 class Matcher
 {
 public:
@@ -398,12 +381,6 @@ public:
         Term* rhs = nullptr;
         EquivalenceClass* rhs_eq = nullptr;
         int eq_id = 0;
-    };
-
-    struct Arg
-    {
-        Term* term = nullptr;
-        int node_id = 0;
     };
 
     bool match(Term* lhs, Term* rhs)
@@ -433,7 +410,7 @@ public:
                     return true;
                 }
             }
-            else if (lhs->label[0] == '`')
+            else if (lhs->label[0] == '~')
             {
                 auto found_arg = args.find(lhs->label);
                 if (found_arg == args.end())
@@ -554,7 +531,8 @@ public:
 
     void pringArgs()
     {
-        std::cout <<"--------------Result-------------\n" << "Args : \n";
+        std::cout << "--------------Result-------------\n"
+            << "Args : \n";
         for (auto arg : args)
         {
             std::cout << arg.first << " = " << arg.second.term->term_str << '\n';
@@ -565,6 +543,73 @@ public:
     std::map<std::string, Arg> args;
 };
 
+void generateIdentities(const Identity& templ, std::map<std::string, EquivalenceClass>& nodes, std::vector<std::unique_ptr<Term>>& terms, int id_i)
+{
+    Parser pr;
+    std::string all_terms;
+    all_terms += templ.lhs + "," + templ.rhs;
+    auto res = pr.start(all_terms);
+    std::map<std::string, std::string> identities;
+    int terms_size_old = terms.size();
+    for (auto& node : nodes)
+    {
+        if (node.second.identitites_hold.contains(id_i))
+        {
+            continue;
+        }
+        if (node.second.representative->templ || node.second.representatives.empty())
+        {
+            continue;
+        }
+        std::map<std::string, Term*> args;
+        Matcher mc(nodes);
+        if (mc.match(res[0].get(), node.second.representative))
+        {
+            node.second.identitites_hold.insert(id_i);
+            std::string lhs_str;
+            rewrite(res[1].get(), mc.args, lhs_str);
+            if (lhs_str == node.second.representative->term_str)
+            {
+                continue;
+            }
+            auto pair = identities.emplace(node.second.representative->term_str, lhs_str);
+            Parser pr2;
+            auto new_term = pr2.start(pair.first->second);
+            terms.push_back(std::move(new_term.back()));
+        }
+    }
+    for (int i = terms_size_old; i < terms.size(); ++i)
+    {
+        collectNode(terms[i].get(), nodes);
+    }
+    removeDuplicatePreds(nodes);
+    for (auto pair : identities)
+    {
+        if (pair.first == pair.second)
+        {
+            continue;
+        }
+        merge(pair.first, pair.second, nodes);
+    }
+}
+
+void makeTemplate(Term* term, bool& has_var)
+{
+    bool has_var_temp = false;
+    for (auto& child : term->children)
+    {
+        makeTemplate(child.get(), has_var_temp);
+    }
+    if (term->label[0] == L'~')
+    {
+        has_var_temp = true;
+    }
+    if (has_var_temp)
+    {
+        term->templ = true;
+    }
+    has_var = has_var_temp;
+}
 
 int main()
 {
@@ -573,14 +618,19 @@ int main()
     std::vector<Identity> identities = {
         {"+(~a,~b)", "+(~b,~a)"},
         {"+(+(~a,~b),~c)", "+(~a,+(~b,~c))"},
+        {"+(~a,+(~b,~c))", "+(+(~a,~b),~c)"},
         {"*(~a,~b)", "*(~b,~a)"},
         {"*(*(~a,~b),~c)", "*(~a,*(~b,~c))"},
-        {"p(~a,2)","*(~a,~a)"},
-        { "*(~a,~a)","p(~a,2)" }
-    };
-    std::string lhs = "+(p(`a,2),+(p(`b,2),*(2,*(`a,`b))))";//a^2 + b^2 + 2ab
-    std::string rhs = "+(*(*(*(+(e,f),a),c),*(2,+(f,e))),+(*(+(e,f),+(e,f)),*(a,*(+(e,f),*(c,*(*(a,+(e,f)),c))))))";//+(e,f)
+        {"*(~a,*(~b,~c))", "*(*(~a,~b),~c)"},
+        {"p(~a,2)", "*(~a,~a)"},
+        {"*(+(~a,~b),~c)", "+(*(~a,~c),*(~b,~c))"},
+        {"+(*(~a,~c),*(~b,~c))","*(+(~a,~b),~c)"},
+        {"+(~a,~a)", "*(2,~a)"},
 
+    };
+
+    std::string lhs = "+(*(2,*(~a,~b)),+(*(~a,~a),*(~b,~b)))";//2ab + a*a + b*b
+    std::string rhs = "p(+(*(a,b),e),2)";//(e+a)^2
 
     std::cout << "Check equality: " << lhs << " = " << rhs << '\n';
     std::cout << "Identities: \n";
@@ -594,15 +644,17 @@ int main()
     auto lhs_term = res[0].get();
     auto rhs_term = res[1].get();
 
-    
+    bool has_var = false;
+    makeTemplate(lhs_term, has_var);
     std::map<std::string, EquivalenceClass> nodes;
     collectNodes(res, nodes);
     bool res1 = false;
-    for (int i = 0; i < 30; i++)
+    for (int i = 0; i < 15; i++)
     {
+        int id_i = 0;
         for (auto& id : identities)
         {
-            generateIdentities(id, nodes, res, identities.size());
+            generateIdentities(id, nodes, res, id_i);
             Matcher mc(nodes);
             if (mc.match(lhs_term, rhs_term))
             {
@@ -610,6 +662,7 @@ int main()
                 res1 = true;
                 break;
             }
+            id_i++;
         }
         std::cout << (res1 ? "-----------------------Found \n" : "");
         if (res1)
@@ -618,35 +671,18 @@ int main()
         }
     }
     std::cout << '\n';
-    // std::map<std::string, std::vector<std::string>> classes;
-    // for (auto pair : nodes)
-    // {
-    //     auto cl = find(nodes, pair.first);
-    //     auto found = classes.find(cl->representative->term_str);
-    //     if (found != classes.end())
-    //     {
-    //         found->second.push_back(pair.first);
-    //     }
-    //     else
-    //     {
-    //         classes.emplace(cl->representative->term_str, std::vector<std::string>{pair.first});
-    //     }
-    // }
-    // std::cout << "Equivalence classes: \n";
-    // for (auto cl : classes)
-    // {
-    //     for (auto &el : cl.second)
-    //     {
-    //         std::cout << cl.first << "  " << el << '\n';
-    //     }
-    // }
 
     for (auto nd : nodes)
     {
-        for (auto& ch : nd.second.representatives)
+        if (nd.second.representative->templ)
+        {
+            continue;
+        }
+        std::cout << nd.first << "\n";
+        /*for (auto& ch : nd.second.representatives)
         {
             std::cout << nd.first << "  " << ch->representative->term_str << '\n';
-        }
+        }*/
     }
 
     return 0;
