@@ -15,6 +15,8 @@ struct Term
     std::unordered_set<Term*> parents;
     std::vector<Term*> e_reps;
     Term* e_rep = nullptr;
+    bool pat = false;
+    std::vector<int> comp_order;
 };
 
 class Parser
@@ -198,29 +200,298 @@ void merge(Term* t1, Term* t2)
     }
 }
 
+void markPatternNodes(Term* t)
+{
+    bool pat_temp = false;
+    for (auto ch : t->children)
+    {
+        markPatternNodes(ch);
+        pat_temp |= ch->pat;
+    }
+    if (pat_temp)
+    {
+        t->pat = true;
+        return;
+    }
+    if (t->label[0] == '`')
+    {
+        t->pat = true;
+    }
+}
+
+void setupOrder(Term* t)
+{
+    for (int i = 0; i < t->children.size(); ++i)
+    {
+        if(!t->children[i]->pat)
+        {
+            t->comp_order.push_back(i);
+        }
+    }
+    for (int i = 0; i < t->children.size(); ++i)
+    {
+        if (t->children[i]->pat)
+        {
+            t->comp_order.push_back(i);
+        }
+    }
+    for (auto ch : t->children)
+    {
+        setupOrder(ch);
+    }
+}
+struct Arg
+{
+    Term* term = nullptr;
+    int node_id = 0;
+};
+
+
+class Matcher
+{
+    struct BStackEl
+    {
+        int parent_i = -1;
+        int child_i = 0;
+        int eq_i = -1;
+        Term* lhs = nullptr;
+        Term* rhs = nullptr;
+        Term* rhs_main = nullptr;
+
+        void nextRhs()
+        {
+            ++eq_i;
+            if (lhs->label[0] == '`')
+            {
+                return;
+            }
+            for (; eq_i < rhs_main->e_reps.size(); ++eq_i)
+            {
+                if (rhs_main->e_reps[eq_i]->label == lhs->label)
+                {
+                    return;
+                }
+            }
+        }
+        bool updateEq()
+        {
+            nextRhs();
+            if (eq_i >= rhs_main->e_reps.size())
+            {
+                return false;
+            }
+            rhs = rhs_main->e_reps[eq_i];
+            child_i = 0;
+            return true;
+        }
+        bool getChild(Term*& out_lhs, Term*& out_rhs)
+        {
+            if (rhs->children.empty())
+            {
+                return false;
+            }
+            if (child_i >= lhs->children.size())
+            {
+                return false;
+            }
+            out_lhs = lhs->children[lhs->comp_order[child_i]];
+            out_rhs = rhs->children[lhs->comp_order[child_i]];
+            return true;
+        }
+    };
+public:
+
+    bool match(Term* lhs, Term* rhs)
+    {
+        BStackEl el;
+        el.lhs = lhs;
+        el.rhs_main = find(rhs);
+        if (!el.updateEq())
+        {
+            return false;
+        }
+        bstack.push_back(el);
+        while (true)
+        {
+            BStackEl& top = bstack.back();
+            if (find(top.lhs) == find(top.rhs))
+            {
+                if (!next())
+                {
+                    return true;
+                }
+                BStackEl& new_top = bstack.back();
+                if (!new_top.updateEq())
+                {
+                    if (!back())
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (top.lhs->label[0] == '`')
+            {
+                auto found_arg = args.find(top.lhs->label);
+                if (found_arg == args.end())
+                {
+                    auto new_arg = args.emplace(top.lhs->label, Arg());
+                    new_arg.first->second.node_id = bstack.size();
+                    new_arg.first->second.term = top.rhs;
+                }
+                else if(find(found_arg->second.term) != find(top.rhs))
+                {
+                    if (!back())
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!next())
+                    {
+                        return true;
+                    }
+                    BStackEl& new_top = bstack.back();
+                    if (!new_top.updateEq())
+                    {
+                        if (!back())
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (!in())
+                {
+                    return true;
+                }
+                BStackEl& new_top = bstack.back();
+                if (!new_top.updateEq())
+                {
+                    if (!back())
+                    {
+                        return false;
+                    }
+                }
+
+            }
+            
+        }
+
+    }
+
+    // false means we finished comparisson
+    bool next()
+    {
+        auto& top = bstack.back();
+        int parent_i = top.parent_i;
+        while (parent_i >= 0)
+        {
+            auto& par_el = bstack[parent_i];
+            Term* lhs = nullptr;
+            Term* rhs = nullptr;
+            if (par_el.getChild(lhs, rhs))
+            {
+                BStackEl new_el;
+                new_el.lhs = lhs;
+                new_el.rhs_main = find(rhs);
+                new_el.parent_i = parent_i;
+                bstack.push_back(new_el);
+                ++par_el.child_i;
+                return true;
+            }
+            else
+            {
+                parent_i = par_el.parent_i;
+            }
+        }
+        return false;
+    }
+
+    bool back()
+    {
+        for (int i = bstack.size() - 1; i >= 0; --i)
+        {
+            auto& top = bstack.back();
+            if (top.updateEq())
+            {
+                // clear args
+                for (auto it = args.begin(); it != args.end();)
+                {
+                    if (it->second.node_id > i)
+                    {
+                        it = args.erase(it); // returns next valid iterator
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+                return true;
+            }
+            if(top.parent_i >= 0)
+            {
+                auto& par = bstack[top.parent_i];
+                --par.child_i;
+            }
+            bstack.pop_back();
+        }
+        return false;
+    }
+
+    bool in()
+    {
+        auto& top = bstack.back();
+        Term* lhs = nullptr;
+        Term* rhs = nullptr;
+        
+        if (!top.getChild(lhs, rhs))
+        {
+            return next();
+        }
+        ++top.child_i;
+        BStackEl new_el;
+        new_el.lhs = lhs;
+        new_el.rhs_main = find(rhs);
+        new_el.parent_i = bstack.size() - 1;
+        bstack.push_back(new_el);
+        return true;
+    }
+
+    std::vector<BStackEl> bstack;
+    std::map<std::string, Arg> args;
+};
+
 int main()
 {
     
     std::vector<Identity> identities = {
-        {"+(a,*(a,b))", "+(*(a,b),a)"},
-        {"*(a,b)", "*(b,a)"},
+        {"+(a,*(a,*(c,d)))", "+(*(a,*(c,d)),a)"},
+        {"*(a,*(c,d))", "*(*(c,d),a)"},
     };
 
-    std::string lhs = "+(a,*(a,b))";
-    std::string rhs = "+(*(b,a),a)";
-
+    std::string lhs = "+(`a,*(`a,`b))";
+    std::string rhs = "+(*(*(c,d),a),a)";
+    Term* t_lhs = nullptr;
+    Term* t_rhs = nullptr;
     std::map<std::string, std::unique_ptr<Term>> terms_map;
 
     {
         Parser pr(lhs);
         pr.parse();
         compact(pr.m_current_term, 0, terms_map);
+        t_lhs = terms_map.find(lhs)->second.get();
+        markPatternNodes(t_lhs);
+        setupOrder(t_lhs);
     }
 
     {
         Parser pr(rhs);
         pr.parse();
         compact(pr.m_current_term, 0, terms_map);
+        t_rhs = terms_map.find(rhs)->second.get();
     }
 
     for (auto& id : identities)
@@ -230,6 +501,8 @@ int main()
             pr.parse();
             compact(pr.m_current_term, 0, terms_map);
             id.t_lhs = terms_map.find(id.lhs)->second.get();
+            markPatternNodes(id.t_lhs);
+            setupOrder(id.t_lhs);
         }
 
         {
@@ -237,10 +510,13 @@ int main()
             pr.parse();
             compact(pr.m_current_term, 0, terms_map);
             id.t_rhs = terms_map.find(id.rhs)->second.get();
+            markPatternNodes(id.t_rhs);
+            setupOrder(id.t_rhs);
         }
         merge(id.t_lhs, id.t_rhs);
     }
-
+    Matcher mc;
+    mc.match(t_lhs, t_rhs);
 
     return 0;
 }
