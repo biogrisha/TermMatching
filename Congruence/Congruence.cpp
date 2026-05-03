@@ -17,6 +17,8 @@ struct Term
     Term* e_rep = nullptr;
     bool pat = false;
     std::vector<int> comp_order;
+    std::unordered_set<int> ids_passed;
+    bool pending_cong = false;
 };
 
 class Parser
@@ -105,13 +107,14 @@ void deleteRecursive(Term* term)
     delete term;
 }
 
-void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term>>& terms_map)
+void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term>>& terms_map, bool before_merge = true)
 {
     auto found_term = terms_map.find(term->term_str);
     if (found_term == terms_map.end())
     {
         //in this case this means that this term and its parents are not in terms_map
         //therefor we just put it into map without changing its parents
+        term->pending_cong = !before_merge;
         terms_map.emplace(term->term_str, std::unique_ptr<Term>(term));
     }
     else
@@ -134,7 +137,7 @@ void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term
     int i = 0;
     for (auto ch : term->children)
     {
-        compact(ch, i, terms_map);
+        compact(ch, i, terms_map, before_merge);
         ++i;
     }
 }
@@ -152,6 +155,10 @@ void unionTerms(Term* t1, Term* t2)
 {
     t1 = find(t1);
     t2 = find(t2);
+    if (t1 == t2)
+    {
+        return;
+    }
     Term* main_t = t1->e_reps.size() > t2->e_reps.size() ? t1 : t2;
     Term* sub_t = t1 == main_t ? t2 : t1;
 
@@ -163,6 +170,11 @@ void unionTerms(Term* t1, Term* t2)
     main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
     sub_t->e_reps.clear();
     sub_t->e_rep = main_t;
+    //for(auto id : sub_t->ids_passed)
+    //{
+    //    main_t->ids_passed.insert(id);
+    //}
+    //sub_t->ids_passed.clear();
 }
 
 bool cong(Term* t1, Term* t2)
@@ -331,12 +343,24 @@ public:
             }
             else if (top.lhs->label[0] == '`')
             {
-                auto found_arg = args.find(top.lhs->label);
+                auto found_arg = args.find(top.lhs);
                 if (found_arg == args.end())
                 {
-                    auto new_arg = args.emplace(top.lhs->label, Arg());
+                    auto new_arg = args.emplace(top.lhs, Arg());
                     new_arg.first->second.node_id = bstack.size();
                     new_arg.first->second.term = top.rhs;
+                    if (!next())
+                    {
+                        return true;
+                    }
+                    BStackEl& new_top = bstack.back();
+                    if (!new_top.updateEq())
+                    {
+                        if (!back())
+                        {
+                            return false;
+                        }
+                    }
                 }
                 else if(find(found_arg->second.term) != find(top.rhs))
                 {
@@ -363,6 +387,14 @@ public:
             }
             else
             {
+                if (!lhs->pat)
+                {
+                    if (!back())
+                    {
+                        return false;
+                    }
+                    continue;
+                }
                 if (!in())
                 {
                     return true;
@@ -394,12 +426,12 @@ public:
             Term* rhs = nullptr;
             if (par_el.getChild(lhs, rhs))
             {
+                ++par_el.child_i;
                 BStackEl new_el;
                 new_el.lhs = lhs;
                 new_el.rhs_main = find(rhs);
                 new_el.parent_i = parent_i;
                 bstack.push_back(new_el);
-                ++par_el.child_i;
                 return true;
             }
             else
@@ -461,19 +493,111 @@ public:
     }
 
     std::vector<BStackEl> bstack;
-    std::map<std::string, Arg> args;
+    std::map<Term*, Arg> args;
 };
+
+
+void rewrite(Term* pat, std::map<Term*, Arg>& args, std::string& res)
+{
+    if (pat->label[0] == '`')
+    {
+        auto arg = args.find(pat);
+        if (arg == args.end())
+        {
+            res += pat->label;
+        }
+        else
+        {
+            res += arg->second.term->term_str;
+        }
+        return;
+    }
+    res += pat->label;
+    if (!pat->children.empty())
+    {
+        res += '(';
+        for (auto& ch : pat->children)
+        {
+            rewrite(ch, args, res);
+            res += ',';
+        }
+        res.back() = ')';
+    }
+}
+
+Term* instantiate(Term* pat, std::map<Term*, Arg>& args, std::map<std::string, std::unique_ptr<Term>>& terms_map)
+{
+    std::string str;
+    rewrite(pat, args, str);
+    auto found = terms_map.find(str);
+    if (found != terms_map.end())
+    {
+        return found->second.get();
+    }
+    Parser pr(str);
+    pr.parse();
+    compact(pr.m_current_term, 0, terms_map);
+
+    return terms_map.find(str)->second.get();
+}
+
+void updateCongruence(Term* t)
+{
+    if (!t->pending_cong)
+    {
+        return;
+    }
+    if (t->children.empty())
+    {
+        return;
+    }
+    for (auto ch : t->children)
+    {
+        updateCongruence(ch);
+    }
+    auto pars = find(t->children.back())->parents;
+    for (auto par : pars)
+    {
+        if (find(t) != find(par) && cong(t, par))
+        {
+            unionTerms(t, par);
+        }
+    }
+}
+
+struct TermView
+{
+    Term* t = nullptr;
+    std::vector<TermView> children;
+};
+
+struct PathEl
+{
+    Term* t;
+    int pos = 0;
+};
+
+//std::vector<std::vector<PathEl>> 
 
 int main()
 {
     
     std::vector<Identity> identities = {
-        {"+(a,*(a,*(c,d)))", "+(*(a,*(c,d)),a)"},
-        {"*(a,*(c,d))", "*(*(c,d),a)"},
+        {"+(`a,`b)", "+(`b,`a)"},
+        {"+(+(`a,`b),`c)", "+(`a,+(`b,`c))"},
+        {"+(`a,+(`b,`c))", "+(+(`a,`b),`c)"},
+        {"*(`a,`b)", "*(`b,`a)"},
+        {"*(*(`a,`b),`c)", "*(`a,*(`b,`c))"},
+        {"*(`a,*(`b,`c))", "*(*(`a,`b),`c)"},
+        //{"p(`a,2)", "*(`a,`a)"},
+        {"*(+(`a,`b),`c)", "+(*(`a,`c),*(`b,`c))"},
+        {"+(*(`a,`c),*(`b,`c))","*(+(`a,`b),`c)"},
+        //{"+(`a,`a)", "*(2,`a)"},
     };
 
-    std::string lhs = "+(`a,*(`a,`b))";
-    std::string rhs = "+(*(*(c,d),a),a)";
+    std::string lhs = "+(*(`a,`b),+(*(`a,`b),+(*(`a,`a),*(`b,`b))))";//2ab + a*a + b*b
+    std::string rhs = "*(+(b,a),+(a,b))";//(e+a)^2
+
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
     std::map<std::string, std::unique_ptr<Term>> terms_map;
@@ -513,10 +637,91 @@ int main()
             markPatternNodes(id.t_rhs);
             setupOrder(id.t_rhs);
         }
-        merge(id.t_lhs, id.t_rhs);
+    }
+
+    for (int i = 0; i < 30; ++i)
+    {
+        int id_i = 0;
+        for (auto& id : identities)
+        {
+            std::vector<Identity> new_ids;
+            for (auto& t : terms_map)
+            {
+                if (t.second->pat)
+                {
+                    continue;
+                }
+                if (t.second->e_rep != t.second.get())
+                {
+                    continue;
+                }
+                if (t.second->ids_passed.contains(id_i))
+                {
+                    continue;
+                }
+                Matcher mc;
+                if (mc.match(id.t_lhs, t.second.get()))
+                {
+                    t.second->ids_passed.insert(id_i);
+
+                    std::string str;
+                    rewrite(id.t_rhs, mc.args, str);
+                    auto& new_id = new_ids.emplace_back();
+                    new_id.t_lhs = t.second.get();
+                    new_id.rhs = std::move(str);
+
+                    std::cout << "==================== \n";
+                    std::cout << id.lhs << " => " << id.rhs << '\n';
+                    std::cout << t.second->term_str << " => " << new_id.rhs << '\n';
+                    for (auto& arg : mc.args)
+                    {
+                        std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
+                    }
+                }
+            }
+
+            for (auto& new_id : new_ids)
+            {
+                if (new_id.t_lhs->term_str == new_id.rhs)
+                {
+                    continue;
+                }
+                auto found = terms_map.find(new_id.rhs);
+                if (found != terms_map.end())
+                {
+                    new_id.t_rhs = found->second.get();
+                }
+                else
+                {
+                    Parser pr(new_id.rhs);
+                    pr.parse();
+                    compact(pr.m_current_term, 0, terms_map, false);
+                    new_id.t_rhs = terms_map.find(new_id.rhs)->second.get();
+                    updateCongruence(new_id.t_rhs);
+                }
+                merge(new_id.t_lhs, new_id.t_rhs);
+            }
+
+            
+            id_i++;
+        }
     }
     Matcher mc;
-    mc.match(t_lhs, t_rhs);
-
+    if (mc.match(t_lhs, t_rhs))
+    {
+        std::cout << "match------------- \n";
+        for (auto& arg : mc.args)
+        {
+            std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
+        }
+        return 0;
+    }
+    for (auto& t : terms_map)
+    {
+        for (auto& rep : t.second->e_reps)
+        {
+            std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+        }
+    }
     return 0;
 }
