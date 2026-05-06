@@ -6,7 +6,7 @@
 #include <cctype>
 #include <map>
 #include <unordered_set>
-
+#include <chrono>
 struct Term
 {
     std::string term_str;
@@ -159,7 +159,7 @@ void unionTerms(Term* t1, Term* t2)
     {
         return;
     }
-    Term* main_t = t1->e_reps.size() > t2->e_reps.size() ? t1 : t2;
+    Term* main_t = t1->e_reps.size() < t2->e_reps.size() ? t1 : t2;
     Term* sub_t = t1 == main_t ? t2 : t1;
 
     for(auto par : sub_t->parents)
@@ -193,8 +193,12 @@ bool cong(Term* t1, Term* t2)
     return true;
 }
 
-void merge(Term* t1, Term* t2)
+void merge(Term* t1, Term* t2, int depth = 1)
 {
+    if (depth == 20)
+    {
+        std::cout << "dsfd";
+    }
     t1 = find(t1);
     t2 = find(t2);
     auto pars1 = t1->parents;
@@ -202,11 +206,19 @@ void merge(Term* t1, Term* t2)
     unionTerms(t1, t2);
     for (auto par1 : pars1)
     {
+        if (find(par1) == t1)
+        {
+            continue;
+        }
         for (auto par2 : pars2)
         {
+            if (find(par2) == t1)
+            {
+                continue;
+            }
             if (par1 != par2 && cong(par1, par2))
             {
-                merge(par1, par2);
+                merge(par1, par2, depth + 1);
             }
         }
     }
@@ -573,11 +585,97 @@ struct TermView
 
 struct PathEl
 {
-    Term* t;
+    Term* t = nullptr;
     int pos = 0;
 };
 
-//std::vector<std::vector<PathEl>> 
+struct InvTree
+{
+    Term* t = nullptr;
+    int pos = 0;
+    std::vector<InvTree> parents;
+};
+
+void collectPaths(Term* t, int pos, std::vector<PathEl>& current, std::vector<std::vector<PathEl>>& result)
+{
+    auto& path_el = current.emplace_back();
+    path_el.pos = pos;
+    path_el.t = t;
+    if (!t->pat || t->label[0] == '`')
+    {
+        result.push_back(current);
+    }
+    else
+    {
+        int i = 0;
+        for (auto ch : t->children)
+        {
+            collectPaths(ch, i, current, result);
+            ++i;
+        }
+    }
+    current.pop_back();
+}
+
+bool makeInvPathTree(InvTree& tree, const std::vector<PathEl>& path, int path_i)
+{
+    if (path_i < 0)
+    {
+        return true;
+    }
+    auto t_top = find(tree.t);
+    for (auto par : t_top->parents)
+    {
+        //iterate over parents
+        if (par->label == path[path_i].t->label)
+        {
+            //parent have needed label
+            int i = 0;
+            if (find(par->children[tree.pos]) == t_top)
+            {
+                InvTree inv_el;
+                inv_el.pos = path[path_i].pos;
+                inv_el.t = par;
+                tree.parents.push_back(inv_el);
+                if (!makeInvPathTree(tree.parents.back(), path, path_i - 1))
+                {
+                    tree.parents.pop_back();
+                }
+            }
+        }
+    }
+    return !tree.parents.empty();
+}
+
+void collectPathsPerTerm(InvTree& tree, std::vector<PathEl>& curr_path, std::map<Term*, std::vector<std::vector<PathEl>>>& paths_per_term)
+{
+    PathEl p_el;
+    p_el.pos = tree.pos;
+    p_el.t = tree.t;
+    curr_path.push_back(p_el);
+
+    if (p_el.pos == -1)
+    {
+        auto found = paths_per_term.find(tree.t);
+        if (found == paths_per_term.end())
+        {
+            auto new_el = paths_per_term.emplace(tree.t, std::vector<std::vector<PathEl>>());
+            new_el.first->second.push_back(curr_path);
+        }
+        else
+        {
+            found->second.push_back(curr_path);
+        }
+    }
+    else
+    {
+        for (auto& par : tree.parents)
+        {
+            collectPathsPerTerm(par, curr_path, paths_per_term);
+        }
+    }
+    curr_path.pop_back();
+}
 
 int main()
 {
@@ -589,14 +687,14 @@ int main()
         {"*(`a,`b)", "*(`b,`a)"},
         {"*(*(`a,`b),`c)", "*(`a,*(`b,`c))"},
         {"*(`a,*(`b,`c))", "*(*(`a,`b),`c)"},
-        //{"p(`a,2)", "*(`a,`a)"},
+        {"p(`a,2)", "*(`a,`a)"},
         {"*(+(`a,`b),`c)", "+(*(`a,`c),*(`b,`c))"},
         {"+(*(`a,`c),*(`b,`c))","*(+(`a,`b),`c)"},
-        //{"+(`a,`a)", "*(2,`a)"},
+        {"+(`a,`a)", "*(2,`a)"},
     };
 
-    std::string lhs = "+(*(`a,`b),+(*(`a,`b),+(*(`a,`a),*(`b,`b))))";//2ab + a*a + b*b
-    std::string rhs = "*(+(b,a),+(a,b))";//(e+a)^2
+    std::string lhs = "+(*(2,*(`a,`b)),+(*(`a,`a),*(`b,`b)))";//2ab + a*a + b*b
+    std::string rhs = "p(+(0,b),2)";//(e+a)^2
 
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
@@ -639,6 +737,8 @@ int main()
         }
     }
 
+
+
     for (int i = 0; i < 30; ++i)
     {
         int id_i = 0;
@@ -666,17 +766,13 @@ int main()
 
                     std::string str;
                     rewrite(id.t_rhs, mc.args, str);
+                    if (str == "+(*(b,0),*(b,0))")
+                    {
+                        std::cout << "sdf";
+                    }
                     auto& new_id = new_ids.emplace_back();
                     new_id.t_lhs = t.second.get();
                     new_id.rhs = std::move(str);
-
-                    std::cout << "==================== \n";
-                    std::cout << id.lhs << " => " << id.rhs << '\n';
-                    std::cout << t.second->term_str << " => " << new_id.rhs << '\n';
-                    for (auto& arg : mc.args)
-                    {
-                        std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
-                    }
                 }
             }
 
@@ -706,7 +802,47 @@ int main()
             id_i++;
         }
     }
-    Matcher mc;
+
+    std::vector<PathEl> cur_path;
+    std::vector<std::vector<PathEl>> paths;
+    collectPaths(identities[5].t_lhs, -1, cur_path, paths);
+    std::vector<std::vector<InvTree>> inv_trees;
+    for(auto& path : paths)
+    {
+        inv_trees.emplace_back();
+        for (auto& t : terms_map)
+        {
+            if (t.second->pat)
+            {
+                continue;
+            }
+            if (t.second->e_rep != t.second.get())
+            {
+                continue;
+            }
+            {
+                InvTree tr;
+                tr.t = t.second.get();
+                tr.pos = path.back().pos;
+                if (makeInvPathTree(tr, path, path.size() - 2))
+                {
+                    inv_trees.back().push_back(std::move(tr));
+                }
+            }
+
+        }
+    }
+    std::map<Term*, std::vector<std::vector<PathEl>>> paths_per_term;
+    for (auto& tr_arr : inv_trees)
+    {
+        for(auto& tr : tr_arr)
+        {
+            std::vector<PathEl> curr_path;
+            collectPathsPerTerm(tr, curr_path, paths_per_term);
+        }
+    }
+
+    /*Matcher mc;
     if (mc.match(t_lhs, t_rhs))
     {
         std::cout << "match------------- \n";
@@ -721,6 +857,23 @@ int main()
         for (auto& rep : t.second->e_reps)
         {
             std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+        }
+    }*/
+
+    for (auto& paths1 : paths_per_term)
+    {
+        if (paths1.second.size() < 3)
+        {
+            continue;
+        }
+        std::cout << "\n=========== \n";
+        for (auto& path : paths1.second)
+        {
+            std::cout << "\n";
+            for (int i = path.size() - 1; i >= 0; i--)
+            {
+                std::cout << path[i].t->term_str << " -> ";
+            }
         }
     }
     return 0;
