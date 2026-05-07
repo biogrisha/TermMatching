@@ -17,7 +17,6 @@ struct Term
     Term* e_rep = nullptr;
     bool pat = false;
     std::vector<int> comp_order;
-    std::unordered_set<int> ids_passed;
     bool pending_cong = false;
 };
 
@@ -151,39 +150,13 @@ Term* find(Term* t)
     return t;
 }
 
-void unionTerms(Term* t1, Term* t2)
-{
-    t1 = find(t1);
-    t2 = find(t2);
-    if (t1 == t2)
-    {
-        return;
-    }
-    Term* main_t = t1->e_reps.size() < t2->e_reps.size() ? t1 : t2;
-    Term* sub_t = t1 == main_t ? t2 : t1;
-
-    for(auto par : sub_t->parents)
-    {
-        main_t->parents.insert(par);
-    }
-    sub_t->parents.clear();
-    main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
-    sub_t->e_reps.clear();
-    sub_t->e_rep = main_t;
-    //for(auto id : sub_t->ids_passed)
-    //{
-    //    main_t->ids_passed.insert(id);
-    //}
-    //sub_t->ids_passed.clear();
-}
-
 bool cong(Term* t1, Term* t2)
 {
     if (t1->label != t2->label)
     {
         return false;
     }
-    for(int i = 0; i < t1->children.size(); ++i)
+    for (int i = 0; i < t1->children.size(); ++i)
     {
         if (find(t1->children[i]) != find(t2->children[i]))
         {
@@ -193,17 +166,73 @@ bool cong(Term* t1, Term* t2)
     return true;
 }
 
-void merge(Term* t1, Term* t2, int depth = 1)
+void unionTerms(Term* main_t, Term* sub_t, bool congruent = false)
 {
-    if (depth == 20)
+    main_t = find(main_t);
+    sub_t = find(sub_t);
+    if (main_t == sub_t)
     {
-        std::cout << "dsfd";
+        return;
     }
+
+
+    for(auto par : sub_t->parents)
+    {
+        main_t->parents.insert(par);
+    }
+    main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
+    sub_t->e_reps.clear();
+    sub_t->e_rep = main_t;
+
+    if (congruent || cong(main_t, sub_t))
+    {
+        for (auto par : main_t->parents)
+        {
+            for (int i = 0; i < par->children.size(); ++i)
+            {
+                if (par->children[i] == sub_t)
+                {
+                    par->children[i] = main_t;
+                }
+            }
+        }
+        for (auto ch : sub_t->children)
+        {
+            ch = find(ch);
+            ch->parents.erase(sub_t);
+            ch->parents.insert(main_t);
+        }
+
+        //opt: can be moved before e_reps.insert
+        for (size_t i = 0; i < main_t->e_reps.size(); ++i)
+        {
+            if (main_t->e_reps[i] == sub_t)
+            {
+                std::swap(main_t->e_reps[i], main_t->e_reps.back());
+                main_t->e_reps.pop_back();
+                break;
+            }
+        }
+    }
+}
+
+void updateCongruence(Term* t);
+
+void merge(Term* t1, Term* t2, bool rec = false)
+{
     t1 = find(t1);
     t2 = find(t2);
+    if (t1 == t2)
+    {
+        return;
+    }
     auto pars1 = t1->parents;
     auto pars2 = t2->parents;
-    unionTerms(t1, t2);
+    if (!rec)
+    {
+        updateCongruence(t2);
+    }
+    unionTerms(t1, t2, rec);
     for (auto par1 : pars1)
     {
         if (find(par1) == t1)
@@ -216,9 +245,9 @@ void merge(Term* t1, Term* t2, int depth = 1)
             {
                 continue;
             }
-            if (par1 != par2 && cong(par1, par2))
+            if (find(par1) != find(par2) && cong(par1, par2))
             {
-                merge(par1, par2, depth + 1);
+                merge(par1, par2, true);
             }
         }
     }
@@ -327,14 +356,22 @@ public:
 
     bool match(Term* lhs, Term* rhs)
     {
-        BStackEl el;
-        el.lhs = lhs;
-        el.rhs_main = find(rhs);
-        if (!el.updateEq())
+        if (first_call)
+        {
+            first_call = false;
+            BStackEl el;
+            el.lhs = lhs;
+            el.rhs_main = find(rhs);
+            if (!el.updateEq())
+            {
+                return false;
+            }
+            bstack.push_back(el);
+        }
+        else if (!back())
         {
             return false;
         }
-        bstack.push_back(el);
         while (true)
         {
             BStackEl& top = bstack.back();
@@ -506,6 +543,7 @@ public:
 
     std::vector<BStackEl> bstack;
     std::map<Term*, Arg> args;
+    bool first_call = true;
 };
 
 
@@ -559,6 +597,7 @@ void updateCongruence(Term* t)
     {
         return;
     }
+    t->pending_cong = false;
     if (t->children.empty())
     {
         return;
@@ -572,7 +611,7 @@ void updateCongruence(Term* t)
     {
         if (find(t) != find(par) && cong(t, par))
         {
-            unionTerms(t, par);
+            unionTerms(par,t, true);
         }
     }
 }
@@ -694,7 +733,7 @@ int main()
     };
 
     std::string lhs = "+(*(2,*(`a,`b)),+(*(`a,`a),*(`b,`b)))";//2ab + a*a + b*b
-    std::string rhs = "p(+(0,b),2)";//(e+a)^2
+    std::string rhs = "p(+(*(a,b),b),2)";//(e+a)^2
 
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
@@ -755,24 +794,20 @@ int main()
                 {
                     continue;
                 }
-                if (t.second->ids_passed.contains(id_i))
-                {
-                    continue;
-                }
                 Matcher mc;
-                if (mc.match(id.t_lhs, t.second.get()))
+                int attempts = 0;
+                while(mc.match(id.t_lhs, t.second.get()))
                 {
-                    t.second->ids_passed.insert(id_i);
-
                     std::string str;
                     rewrite(id.t_rhs, mc.args, str);
-                    if (str == "+(*(b,0),*(b,0))")
-                    {
-                        std::cout << "sdf";
-                    }
                     auto& new_id = new_ids.emplace_back();
                     new_id.t_lhs = t.second.get();
                     new_id.rhs = std::move(str);
+                    if (attempts > 30)
+                    {
+                        break;
+                    }
+                    //attempts++;
                 }
             }
 
@@ -793,7 +828,6 @@ int main()
                     pr.parse();
                     compact(pr.m_current_term, 0, terms_map, false);
                     new_id.t_rhs = terms_map.find(new_id.rhs)->second.get();
-                    updateCongruence(new_id.t_rhs);
                 }
                 merge(new_id.t_lhs, new_id.t_rhs);
             }
@@ -803,7 +837,33 @@ int main()
         }
     }
 
-    std::vector<PathEl> cur_path;
+    Matcher mc;
+    if (mc.match(t_lhs, t_rhs))
+    {
+        std::cout << "match------------- \n";
+        for (auto& arg : mc.args)
+        {
+            std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
+        }
+        for (auto& t : terms_map)
+        {
+            for (auto& rep : t.second->e_reps)
+            {
+                std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+            }
+        }
+        return 0;
+    }
+    for (auto& t : terms_map)
+    {
+        for (auto& rep : t.second->e_reps)
+        {
+            std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+        }
+    }
+    
+
+    /*std::vector<PathEl> cur_path;
     std::vector<std::vector<PathEl>> paths;
     collectPaths(identities[5].t_lhs, -1, cur_path, paths);
     std::vector<std::vector<InvTree>> inv_trees;
@@ -840,27 +900,8 @@ int main()
             std::vector<PathEl> curr_path;
             collectPathsPerTerm(tr, curr_path, paths_per_term);
         }
-    }
-
-    /*Matcher mc;
-    if (mc.match(t_lhs, t_rhs))
-    {
-        std::cout << "match------------- \n";
-        for (auto& arg : mc.args)
-        {
-            std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
-        }
-        return 0;
-    }
-    for (auto& t : terms_map)
-    {
-        for (auto& rep : t.second->e_reps)
-        {
-            std::cout << t.second->term_str << "  " << rep->term_str << "\n";
-        }
     }*/
-
-    for (auto& paths1 : paths_per_term)
+    /*for (auto& paths1 : paths_per_term)
     {
         if (paths1.second.size() < 3)
         {
@@ -875,6 +916,6 @@ int main()
                 std::cout << path[i].t->term_str << " -> ";
             }
         }
-    }
+    }*/
     return 0;
 }
