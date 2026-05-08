@@ -258,6 +258,7 @@ void merge(Term* t1, Term* t2, TermsStorage& storage, bool rec = false)
             {
                 continue;
             }
+
             if (cong(par1, par2))
             {
                 merge(par1, par2, storage, true);
@@ -742,14 +743,23 @@ int main()
         {"*(*(`a,`b),`c)", "*(`a,*(`b,`c))"},
         {"*(`a,*(`b,`c))", "*(*(`a,`b),`c)"},
         {"p(`a,2)", "*(`a,`a)"},
+        {"*(`a,`a)","p(`a,2)"},
         {"*(+(`a,`b),`c)", "+(*(`a,`c),*(`b,`c))"},
         {"+(*(`a,`c),*(`b,`c))","*(+(`a,`b),`c)"},
         {"+(`a,`a)", "*(2,`a)"},
     };
 
-    std::string lhs = "+(*(2,*(`a,`b)),+(*(`a,`a),*(`b,`b)))";//2ab + a*a + b*b
-    std::string rhs = "p(+(*(a,c),*(c,d)),2)";//(e+a)^2
+    std::string lhs = "+(*(2,*(`a,`b)),+(p(`a,2),p(`b,2)))";//2ab + a*a + b*b
+    std::string rhs = "p(+(*(a,c),*(d,c)),2)";//(e+a)^2
 
+    std::cout << "Find solution: \n";
+    std::cout << lhs << " = " << rhs << "\n\n";
+    std::cout << "Identities: \n";
+    for (auto id : identities)
+    {
+        std::cout << id.lhs << " = " << id.rhs << "\n";
+    }
+    std::cout << "\n";
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
     TermsStorage ts;
@@ -831,11 +841,7 @@ int main()
                     new_id.t_rhs = found->second.get();
                     //if rhs already exists
                     //if it congruent to lhs, then they are equal already
-                    //synce system is closed on congruence
-                    if (find(new_id.t_lhs) == find(new_id.t_rhs))
-                    {
-                        continue;
-                    }
+                    //since system is closed under congruence
                 }
                 else
                 {
@@ -848,10 +854,11 @@ int main()
                     //if still different with lhs -> merge
                     updateCongruence(new_id.t_rhs, ts);
                 }
-                if (find(new_id.t_rhs) != find(new_id.t_lhs))
+                if (find(new_id.t_lhs) == find(new_id.t_rhs))
                 {
-                    merge(new_id.t_lhs, new_id.t_rhs, ts);
+                    continue;
                 }
+                merge(new_id.t_lhs, new_id.t_rhs, ts);
                 ts.bin.clear();
             }
             Matcher mc;
@@ -862,18 +869,18 @@ int main()
                 {
                     std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
                 }
-                for (auto& t : ts.terms_map)
+                /*for (auto& t : ts.terms_map)
                 {
                     for (auto& rep : t.second->e_reps)
                     {
                         std::cout << t.second->term_str << "  " << rep->term_str << "\n";
                     }
-                }
+                }*/
                 return 0;
             }
         }
     }
-
+    
     
 
     /*std::vector<PathEl> cur_path;
