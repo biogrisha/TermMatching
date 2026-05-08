@@ -20,6 +20,12 @@ struct Term
     bool pending_cong = false;
 };
 
+struct TermsStorage
+{
+    std::map<std::string, std::unique_ptr<Term>> terms_map;
+    std::vector<std::unique_ptr<Term>> bin;
+};
+
 class Parser
 {
 public:
@@ -106,6 +112,15 @@ void deleteRecursive(Term* term)
     delete term;
 }
 
+Term* find(Term* t)
+{
+    while (t->e_rep != t)
+    {
+        t = t->e_rep;
+    }
+    return t;
+}
+
 void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term>>& terms_map, bool before_merge = true)
 {
     auto found_term = terms_map.find(term->term_str);
@@ -126,7 +141,7 @@ void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term
         //->delete this term recursively
         if(!term->parents.empty())
         {
-            found_term->second->parents.insert(*term->parents.begin());
+            find(found_term->second.get())->parents.insert(*term->parents.begin());
             (*term->parents.begin())->children[term_id] = found_term->second.get();
         }
 
@@ -139,15 +154,6 @@ void compact(Term* term, int term_id, std::map<std::string, std::unique_ptr<Term
         compact(ch, i, terms_map, before_merge);
         ++i;
     }
-}
-
-Term* find(Term* t)
-{
-    while (t->e_rep != t)
-    {
-        t = t->e_rep;
-    }
-    return t;
 }
 
 bool cong(Term* t1, Term* t2)
@@ -166,88 +172,95 @@ bool cong(Term* t1, Term* t2)
     return true;
 }
 
-void unionTerms(Term* main_t, Term* sub_t, bool congruent = false)
+void unionTerms(Term* t1, Term* t2, TermsStorage& storage, bool congruent = false)
 {
-    main_t = find(main_t);
-    sub_t = find(sub_t);
+    Term* main_t = find(t1);
+    Term* sub_t = find(t2);
     if (main_t == sub_t)
     {
         return;
     }
-
 
     for(auto par : sub_t->parents)
     {
         main_t->parents.insert(par);
     }
     main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
+    for (auto rep : main_t->e_reps)
+    {
+        rep->e_rep = main_t;
+    }
     sub_t->e_reps.clear();
-    sub_t->e_rep = main_t;
+    sub_t->parents.clear();
 
-    if (congruent || cong(main_t, sub_t))
+    if (congruent)
     {
         for (auto par : main_t->parents)
         {
             for (int i = 0; i < par->children.size(); ++i)
             {
-                if (par->children[i] == sub_t)
+                if (par->children[i] == t2)
                 {
                     par->children[i] = main_t;
                 }
             }
         }
-        for (auto ch : sub_t->children)
+        for (auto ch : t2->children)
         {
             ch = find(ch);
-            ch->parents.erase(sub_t);
+            ch->parents.erase(t2);
             ch->parents.insert(main_t);
         }
 
         //opt: can be moved before e_reps.insert
         for (size_t i = 0; i < main_t->e_reps.size(); ++i)
         {
-            if (main_t->e_reps[i] == sub_t)
+            if (main_t->e_reps[i] == t2)
             {
                 std::swap(main_t->e_reps[i], main_t->e_reps.back());
                 main_t->e_reps.pop_back();
                 break;
             }
         }
+        auto it = storage.terms_map.find(t2->term_str);
+
+        if (it != storage.terms_map.end())
+        {
+            auto value = std::move(it->second);
+            storage.terms_map.erase(it);
+            storage.bin.push_back(std::move(value));
+        }   
     }
 }
 
-void updateCongruence(Term* t);
+void updateCongruence(Term* t, TermsStorage& storage);
 
-void merge(Term* t1, Term* t2, bool rec = false)
+void merge(Term* t1, Term* t2, TermsStorage& storage, bool rec = false)
 {
-    t1 = find(t1);
-    t2 = find(t2);
+    auto t1_top = find(t1);
+    auto t2_top = find(t2);
     if (t1 == t2)
     {
         return;
     }
-    auto pars1 = t1->parents;
-    auto pars2 = t2->parents;
-    if (!rec)
-    {
-        updateCongruence(t2);
-    }
-    unionTerms(t1, t2, rec);
+    auto pars1 = t1_top->parents;
+    auto pars2 = t2_top->parents;
+    unionTerms(t1, t2, storage, rec);
     for (auto par1 : pars1)
     {
-        if (find(par1) == t1)
+        if (find(par1) == t1_top)
         {
             continue;
         }
         for (auto par2 : pars2)
         {
-            if (find(par2) == t1)
+            if (find(par2) == t1_top)
             {
                 continue;
             }
-            if (find(par1) != find(par2) && cong(par1, par2))
+            if (cong(par1, par2))
             {
-                merge(par1, par2, true);
+                merge(par1, par2, storage, true);
             }
         }
     }
@@ -591,7 +604,7 @@ Term* instantiate(Term* pat, std::map<Term*, Arg>& args, std::map<std::string, s
     return terms_map.find(str)->second.get();
 }
 
-void updateCongruence(Term* t)
+void updateCongruence(Term* t, TermsStorage& storage)
 {
     if (!t->pending_cong)
     {
@@ -604,14 +617,16 @@ void updateCongruence(Term* t)
     }
     for (auto ch : t->children)
     {
-        updateCongruence(ch);
+        updateCongruence(ch, storage);
     }
     auto pars = find(t->children.back())->parents;
     for (auto par : pars)
     {
         if (find(t) != find(par) && cong(t, par))
         {
-            unionTerms(par,t, true);
+            //if found congruent parent, this means that this parent congruent to other parents and there is no need to continue
+            unionTerms(par,t, storage, true);
+            break;
         }
     }
 }
@@ -733,17 +748,17 @@ int main()
     };
 
     std::string lhs = "+(*(2,*(`a,`b)),+(*(`a,`a),*(`b,`b)))";//2ab + a*a + b*b
-    std::string rhs = "p(+(*(a,b),b),2)";//(e+a)^2
+    std::string rhs = "p(+(*(a,c),*(c,d)),2)";//(e+a)^2
 
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
-    std::map<std::string, std::unique_ptr<Term>> terms_map;
+    TermsStorage ts;
 
     {
         Parser pr(lhs);
         pr.parse();
-        compact(pr.m_current_term, 0, terms_map);
-        t_lhs = terms_map.find(lhs)->second.get();
+        compact(pr.m_current_term, 0, ts.terms_map);
+        t_lhs = ts.terms_map.find(lhs)->second.get();
         markPatternNodes(t_lhs);
         setupOrder(t_lhs);
     }
@@ -751,8 +766,8 @@ int main()
     {
         Parser pr(rhs);
         pr.parse();
-        compact(pr.m_current_term, 0, terms_map);
-        t_rhs = terms_map.find(rhs)->second.get();
+        compact(pr.m_current_term, 0, ts.terms_map);
+        t_rhs = ts.terms_map.find(rhs)->second.get();
     }
 
     for (auto& id : identities)
@@ -760,8 +775,8 @@ int main()
         {
             Parser pr(id.lhs);
             pr.parse();
-            compact(pr.m_current_term, 0, terms_map);
-            id.t_lhs = terms_map.find(id.lhs)->second.get();
+            compact(pr.m_current_term, 0, ts.terms_map);
+            id.t_lhs = ts.terms_map.find(id.lhs)->second.get();
             markPatternNodes(id.t_lhs);
             setupOrder(id.t_lhs);
         }
@@ -769,8 +784,8 @@ int main()
         {
             Parser pr(id.rhs);
             pr.parse();
-            compact(pr.m_current_term, 0, terms_map);
-            id.t_rhs = terms_map.find(id.rhs)->second.get();
+            compact(pr.m_current_term, 0, ts.terms_map);
+            id.t_rhs = ts.terms_map.find(id.rhs)->second.get();
             markPatternNodes(id.t_rhs);
             setupOrder(id.t_rhs);
         }
@@ -780,11 +795,10 @@ int main()
 
     for (int i = 0; i < 30; ++i)
     {
-        int id_i = 0;
         for (auto& id : identities)
         {
             std::vector<Identity> new_ids;
-            for (auto& t : terms_map)
+            for (auto& t : ts.terms_map)
             {
                 if (t.second->pat)
                 {
@@ -795,19 +809,13 @@ int main()
                     continue;
                 }
                 Matcher mc;
-                int attempts = 0;
-                while(mc.match(id.t_lhs, t.second.get()))
+                while (mc.match(id.t_lhs, t.second.get()))
                 {
                     std::string str;
                     rewrite(id.t_rhs, mc.args, str);
                     auto& new_id = new_ids.emplace_back();
                     new_id.t_lhs = t.second.get();
                     new_id.rhs = std::move(str);
-                    if (attempts > 30)
-                    {
-                        break;
-                    }
-                    //attempts++;
                 }
             }
 
@@ -817,50 +825,55 @@ int main()
                 {
                     continue;
                 }
-                auto found = terms_map.find(new_id.rhs);
-                if (found != terms_map.end())
+                auto found = ts.terms_map.find(new_id.rhs);
+                if (found != ts.terms_map.end())
                 {
                     new_id.t_rhs = found->second.get();
+                    //if rhs already exists
+                    //if it congruent to lhs, then they are equal already
+                    //synce system is closed on congruence
+                    if (find(new_id.t_lhs) == find(new_id.t_rhs))
+                    {
+                        continue;
+                    }
                 }
                 else
                 {
                     Parser pr(new_id.rhs);
                     pr.parse();
-                    compact(pr.m_current_term, 0, terms_map, false);
-                    new_id.t_rhs = terms_map.find(new_id.rhs)->second.get();
+                    compact(pr.m_current_term, 0, ts.terms_map, false);
+                    new_id.t_rhs = ts.terms_map.find(new_id.rhs)->second.get();
+                    //if new term
+                    //update congruence
+                    //if still different with lhs -> merge
+                    updateCongruence(new_id.t_rhs, ts);
                 }
-                merge(new_id.t_lhs, new_id.t_rhs);
+                if (find(new_id.t_rhs) != find(new_id.t_lhs))
+                {
+                    merge(new_id.t_lhs, new_id.t_rhs, ts);
+                }
+                ts.bin.clear();
             }
-
-            
-            id_i++;
-        }
-    }
-
-    Matcher mc;
-    if (mc.match(t_lhs, t_rhs))
-    {
-        std::cout << "match------------- \n";
-        for (auto& arg : mc.args)
-        {
-            std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
-        }
-        for (auto& t : terms_map)
-        {
-            for (auto& rep : t.second->e_reps)
+            Matcher mc;
+            if (mc.match(t_lhs, t_rhs))
             {
-                std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+                std::cout << "match------------- \n";
+                for (auto& arg : mc.args)
+                {
+                    std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
+                }
+                for (auto& t : ts.terms_map)
+                {
+                    for (auto& rep : t.second->e_reps)
+                    {
+                        std::cout << t.second->term_str << "  " << rep->term_str << "\n";
+                    }
+                }
+                return 0;
             }
         }
-        return 0;
     }
-    for (auto& t : terms_map)
-    {
-        for (auto& rep : t.second->e_reps)
-        {
-            std::cout << t.second->term_str << "  " << rep->term_str << "\n";
-        }
-    }
+
     
 
     /*std::vector<PathEl> cur_path;
