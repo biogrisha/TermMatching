@@ -18,6 +18,7 @@ struct Term
     bool pat = false;
     std::vector<int> comp_order;
     bool pending_cong = false;
+    bool del = false;
 };
 
 struct TermsStorage
@@ -171,7 +172,7 @@ bool cong(Term* t1, Term* t2)
     }
     return true;
 }
-
+TermsStorage ts;
 void unionTerms(Term* t1, Term* t2, TermsStorage& storage, bool congruent = false)
 {
     Term* main_t = find(t1);
@@ -209,7 +210,7 @@ void unionTerms(Term* t1, Term* t2, TermsStorage& storage, bool congruent = fals
         {
             ch = find(ch);
             ch->parents.erase(t2);
-            ch->parents.insert(main_t);
+            ch->parents.insert(t1);
         }
 
         //opt: can be moved before e_reps.insert
@@ -227,9 +228,11 @@ void unionTerms(Term* t1, Term* t2, TermsStorage& storage, bool congruent = fals
         if (it != storage.terms_map.end())
         {
             auto value = std::move(it->second);
+            value->del = true;
             storage.terms_map.erase(it);
             storage.bin.push_back(std::move(value));
-        }   
+        }
+        
     }
 }
 
@@ -248,13 +251,13 @@ void merge(Term* t1, Term* t2, TermsStorage& storage, bool rec = false)
     unionTerms(t1, t2, storage, rec);
     for (auto par1 : pars1)
     {
-        if (find(par1) == t1_top)
+        if (find(par1) == t1_top || par1->del)
         {
             continue;
         }
         for (auto par2 : pars2)
         {
-            if (find(par2) == t1_top)
+            if (find(par2) == t1_top || par2->del)
             {
                 continue;
             }
@@ -762,7 +765,6 @@ int main()
     std::cout << "\n";
     Term* t_lhs = nullptr;
     Term* t_rhs = nullptr;
-    TermsStorage ts;
 
     {
         Parser pr(lhs);
