@@ -177,22 +177,25 @@ void unionTerms(Term* t1, Term* t2, TermsStorage& storage, bool congruent = fals
 {
     Term* main_t = find(t1);
     Term* sub_t = find(t2);
-    if (main_t == sub_t)
+    if (t1 == t2)
     {
         return;
     }
 
-    for(auto par : sub_t->parents)
+    if(main_t != sub_t)
     {
-        main_t->parents.insert(par);
+        for (auto par : sub_t->parents)
+        {
+            main_t->parents.insert(par);
+        }
+        main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
+        for (auto rep : main_t->e_reps)
+        {
+            rep->e_rep = main_t;
+        }
+        sub_t->e_reps.clear();
+        sub_t->parents.clear();
     }
-    main_t->e_reps.insert(main_t->e_reps.end(), sub_t->e_reps.begin(), sub_t->e_reps.end());
-    for (auto rep : main_t->e_reps)
-    {
-        rep->e_rep = main_t;
-    }
-    sub_t->e_reps.clear();
-    sub_t->parents.clear();
 
     if (congruent)
     {
@@ -753,7 +756,7 @@ int main()
     };
 
     std::string lhs = "+(*(2,*(`a,`b)),+(p(`a,2),p(`b,2)))";//2ab + a*a + b*b
-    std::string rhs = "p(+(*(a,c),*(d,c)),2)";//(e+a)^2
+    std::string rhs = "p(+(*(c,d),*(e,f)),2)";//(e+a)^2
 
     std::cout << "Find solution: \n";
     std::cout << lhs << " = " << rhs << "\n\n";
@@ -804,12 +807,12 @@ int main()
     }
 
 
-
+    auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < 30; ++i)
     {
+        std::vector<Identity> new_ids;
         for (auto& id : identities)
         {
-            std::vector<Identity> new_ids;
             for (auto& t : ts.terms_map)
             {
                 if (t.second->pat)
@@ -830,56 +833,62 @@ int main()
                     new_id.rhs = std::move(str);
                 }
             }
+        }
+        std::cout << new_ids.size() << "\n";
+        for (auto& new_id : new_ids)
+        {
+            if (new_id.t_lhs->term_str == new_id.rhs)
+            {
+                continue;
+            }
+            auto found = ts.terms_map.find(new_id.rhs);
+            if (found != ts.terms_map.end())
+            {
+                new_id.t_rhs = found->second.get();
+                //if rhs already exists
+                //if it congruent to lhs, then they are equal already
+                //since system is closed under congruence
+            }
+            else
+            {
+                Parser pr(new_id.rhs);
+                pr.parse();
+                compact(pr.m_current_term, 0, ts.terms_map, false);
+                new_id.t_rhs = ts.terms_map.find(new_id.rhs)->second.get();
+                //if new term
+                //update congruence
+                //if still different with lhs -> merge
+                updateCongruence(new_id.t_rhs, ts);
+            }
+            if (find(new_id.t_lhs) == find(new_id.t_rhs))
+            {
+                continue;
+            }
+            merge(new_id.t_lhs, new_id.t_rhs, ts);
+            ts.bin.clear();
+        }
+        Matcher mc;
+        if (mc.match(t_lhs, t_rhs))
+        {
+            std::cout << "match------------- \n";
+            auto end = std::chrono::high_resolution_clock::now();
 
-            for (auto& new_id : new_ids)
+            auto duration =
+                std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+            std::cout << duration.count() << " ms\n";
+            for (auto& arg : mc.args)
             {
-                if (new_id.t_lhs->term_str == new_id.rhs)
-                {
-                    continue;
-                }
-                auto found = ts.terms_map.find(new_id.rhs);
-                if (found != ts.terms_map.end())
-                {
-                    new_id.t_rhs = found->second.get();
-                    //if rhs already exists
-                    //if it congruent to lhs, then they are equal already
-                    //since system is closed under congruence
-                }
-                else
-                {
-                    Parser pr(new_id.rhs);
-                    pr.parse();
-                    compact(pr.m_current_term, 0, ts.terms_map, false);
-                    new_id.t_rhs = ts.terms_map.find(new_id.rhs)->second.get();
-                    //if new term
-                    //update congruence
-                    //if still different with lhs -> merge
-                    updateCongruence(new_id.t_rhs, ts);
-                }
-                if (find(new_id.t_lhs) == find(new_id.t_rhs))
-                {
-                    continue;
-                }
-                merge(new_id.t_lhs, new_id.t_rhs, ts);
-                ts.bin.clear();
+                std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
             }
-            Matcher mc;
-            if (mc.match(t_lhs, t_rhs))
+            /*for (auto& t : ts.terms_map)
             {
-                std::cout << "match------------- \n";
-                for (auto& arg : mc.args)
+                for (auto& rep : t.second->e_reps)
                 {
-                    std::cout << arg.first->label << " = " << arg.second.term->term_str << '\n';
+                    std::cout << t.second->term_str << "  " << rep->term_str << "\n";
                 }
-                /*for (auto& t : ts.terms_map)
-                {
-                    for (auto& rep : t.second->e_reps)
-                    {
-                        std::cout << t.second->term_str << "  " << rep->term_str << "\n";
-                    }
-                }*/
-                return 0;
-            }
+            }*/
+            return 0;
         }
     }
     
