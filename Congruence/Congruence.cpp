@@ -7,6 +7,7 @@
 #include <map>
 #include <unordered_set>
 #include <chrono>
+
 struct Term
 {
     std::string term_str;
@@ -322,6 +323,7 @@ struct Arg
 
 class Matcher
 {
+public:
     struct BStackEl
     {
         int parent_i = -1;
@@ -355,7 +357,7 @@ class Matcher
         bool updateEq()
         {
             nextRhs();
-            if ((!lhs->pat && eq_i > 0) || eq_i >= rhs_main->e_reps.size())
+            if ((eq_i > 0 && (!lhs->pat || lhs->label[0] == '`')) || eq_i >= rhs_main->e_reps.size())
             {
                 return false;
             }
@@ -757,15 +759,15 @@ int main()
         {"*(`a,`b)", "*(`b,`a)"},
         {"*(*(`a,`b),`c)", "*(`a,*(`b,`c))"},
         {"*(`a,*(`b,`c))", "*(*(`a,`b),`c)"},
-        {"p(`a,f(k,l))", "*(`a,`a)"},
-        {"*(`a,`a)","p(`a,f(k,l))"},
+        {"p(`a,2)", "*(`a,`a)"},
+        {"*(`a,`a)","p(`a,2)"},
         {"*(+(`a,`b),`c)", "+(*(`a,`c),*(`b,`c))"},
         {"+(*(`a,`c),*(`b,`c))","*(+(`a,`b),`c)"},
-        {"+(`a,`a)", "*(f(k,l),`a)"},
+        {"+(`a,`a)", "*(2,`a)"},
     };
 
-    std::string lhs = "+(*(f(k,l),*(`a,`b)),+(p(`a,f(k,l)),p(`b,f(k,l))))";//2ab + a*a + b*b
-    std::string rhs = "p(+(*(a,c),*(d,f)),f(k,l))";//(e+a)^2
+    std::string lhs = "+(*(`a,+(`a,`b)),*(`b,+(`a,`b)))";//*(a*(a,b),b)
+    std::string rhs = "p(+(*(a,c),*(d,f)),2)";//(e+a)^2
 
     std::cout << "Find solution: \n";
     std::cout << lhs << " = " << rhs << "\n\n";
@@ -833,10 +835,6 @@ int main()
                     continue;
                 }
                 Matcher mc;
-                if (id.lhs == "p(`a,f(k,l))" && t.second->term_str == "p(+(*(a,c),*(d,f)),f(k,l))")
-                {
-                    std::cout << "dsf";
-                }
                 while (mc.match(id.t_lhs, t.second.get()))
                 {
                     std::string str;
@@ -847,7 +845,6 @@ int main()
                 }
             }
         }
-        std::cout << new_ids.size() << "\n";
         for (auto& new_id : new_ids)
         {
             if (new_id.t_lhs->term_str == new_id.rhs)
