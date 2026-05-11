@@ -333,7 +333,13 @@ class Matcher
 
         void nextRhs()
         {
+            
             ++eq_i;
+            if (!lhs->pat)
+            {
+                // don't iterate over e-class for ground terms
+                return;
+            }
             if (lhs->label[0] == '`')
             {
                 return;
@@ -349,7 +355,7 @@ class Matcher
         bool updateEq()
         {
             nextRhs();
-            if (eq_i >= rhs_main->e_reps.size())
+            if ((!lhs->pat && eq_i > 0) || eq_i >= rhs_main->e_reps.size())
             {
                 return false;
             }
@@ -395,19 +401,30 @@ public:
         while (true)
         {
             BStackEl& top = bstack.back();
-            if (find(top.lhs) == find(top.rhs))
+            if (!top.lhs->pat)
             {
-                if (!next())
+                if(find(top.lhs) == find(top.rhs))
                 {
-                    return true;
+                    if (!next())
+                    {
+                        return true;
+                    }
+                    BStackEl& new_top = bstack.back();
+                    if (!new_top.updateEq())
+                    {
+                        if (!back())
+                        {
+                            return false;
+                        }
+                    }
                 }
-                BStackEl& new_top = bstack.back();
-                if (!new_top.updateEq())
+                else
                 {
                     if (!back())
                     {
                         return false;
                     }
+                    continue;
                 }
             }
             else if (top.lhs->label[0] == '`')
@@ -456,14 +473,6 @@ public:
             }
             else
             {
-                if (!lhs->pat)
-                {
-                    if (!back())
-                    {
-                        return false;
-                    }
-                    continue;
-                }
                 if (!in())
                 {
                     return true;
@@ -748,15 +757,15 @@ int main()
         {"*(`a,`b)", "*(`b,`a)"},
         {"*(*(`a,`b),`c)", "*(`a,*(`b,`c))"},
         {"*(`a,*(`b,`c))", "*(*(`a,`b),`c)"},
-        {"p(`a,2)", "*(`a,`a)"},
-        {"*(`a,`a)","p(`a,2)"},
+        {"p(`a,f(k,l))", "*(`a,`a)"},
+        {"*(`a,`a)","p(`a,f(k,l))"},
         {"*(+(`a,`b),`c)", "+(*(`a,`c),*(`b,`c))"},
         {"+(*(`a,`c),*(`b,`c))","*(+(`a,`b),`c)"},
-        {"+(`a,`a)", "*(2,`a)"},
+        {"+(`a,`a)", "*(f(k,l),`a)"},
     };
 
-    std::string lhs = "+(*(2,*(`a,`b)),+(p(`a,2),p(`b,2)))";//2ab + a*a + b*b
-    std::string rhs = "p(+(*(c,d),*(e,f)),2)";//(e+a)^2
+    std::string lhs = "+(*(f(k,l),*(`a,`b)),+(p(`a,f(k,l)),p(`b,f(k,l))))";//2ab + a*a + b*b
+    std::string rhs = "p(+(*(a,c),*(d,f)),f(k,l))";//(e+a)^2
 
     std::cout << "Find solution: \n";
     std::cout << lhs << " = " << rhs << "\n\n";
@@ -824,6 +833,10 @@ int main()
                     continue;
                 }
                 Matcher mc;
+                if (id.lhs == "p(`a,f(k,l))" && t.second->term_str == "p(+(*(a,c),*(d,f)),f(k,l))")
+                {
+                    std::cout << "dsf";
+                }
                 while (mc.match(id.t_lhs, t.second.get()))
                 {
                     std::string str;
