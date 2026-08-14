@@ -42,6 +42,7 @@ namespace NewTrs
 			Parser pr(lhs);
 			pr.parse();
 			compact(pr.m_current_term);
+			setupParent(pr.m_current_term);
 			m_id.lhs = pr.m_current_term;
 			m_id.variablesOrder = setupVariablesOrder(m_id.lhs);
 			markPatternNodes(m_id.lhs);
@@ -51,6 +52,7 @@ namespace NewTrs
 			Parser pr(rhs);
 			pr.parse();
 			compact(pr.m_current_term);
+			setupParent(pr.m_current_term);
 			m_id.rhs = pr.m_current_term;
 		}
 
@@ -61,6 +63,7 @@ namespace NewTrs
 				Parser pr(id.lhs);
 				pr.parse();
 				compact(pr.m_current_term);
+				setupParent(pr.m_current_term);
 				newId.lhs = pr.m_current_term;
 				newId.variablesOrder = setupVariablesOrder(newId.lhs);
 				markPatternNodes(newId.lhs);
@@ -70,6 +73,7 @@ namespace NewTrs
 				Parser pr(id.rhs);
 				pr.parse();
 				compact(pr.m_current_term);
+				setupParent(pr.m_current_term);
 				newId.rhs = pr.m_current_term;
 				markPatternNodes(newId.rhs);
 			}
@@ -91,6 +95,7 @@ namespace NewTrs
 							std::cout << "===";
 							std::cout << id.lhs->termString << "->" << trm->termString << "\n";
 							Trs::printVars(id.lhs);
+							//Trs::rewrite(id.)
 						});
 				}
 			}
@@ -257,6 +262,10 @@ namespace NewTrs
 
 	void Trs::compact(Term*& t)
 	{
+		if (t->stored)
+		{
+			return;
+		}
 		for (auto*& ch : t->children)
 		{
 			compact(ch);
@@ -264,12 +273,26 @@ namespace NewTrs
 		auto [it, inserted] = m_storage.emplace(t->termString, t);
 		if (!inserted)
 		{
-			//found term
-			find(it->second.get())->parents.merge(t->parents);
 			delete t;
 			t = it->second.get();
 			//element already in the map, therefore its children are as well
 			return;
+		}
+		else
+		{
+			it->second->stored = true;
+		}
+	}
+
+	void Trs::setupParent(Term* t, Term* parent)
+	{
+		if (parent)
+		{
+			find(t)->parents.insert(parent);
+		}
+		for (Term* ch : t->children)
+		{
+			setupParent(ch, t);
 		}
 	}
 
@@ -317,6 +340,24 @@ namespace NewTrs
 		for (auto* ch : t->children)
 		{
 			printVars(ch);
+		}
+	}
+
+	void Trs::rewrite(Term* t, Term*& res)
+	{
+		if (t->isVariable)
+		{
+			res = t->capture;
+			return;
+		}
+		res = new Term;
+		res->label = t->label;
+		res->eRep = res;
+		res->eReps.push_back(res);
+		for (Term* ch : t->children)
+		{
+			Term*& newCh = res->children.emplace_back();
+			rewrite(ch, newCh);
 		}
 	}
 

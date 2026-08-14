@@ -11,6 +11,7 @@ namespace NewTrs
 {
 	struct Term
 	{
+		bool stored = false;
 		std::string label;
 		std::string termString;
 		std::vector<Term*> children;
@@ -92,12 +93,14 @@ namespace NewTrs
 		void clearCongruent(Term*& tRep);
 		void merge(Term* t1, Term* t2);
 		void compact(Term*& t);
+		void setupParent(Term* t, Term* parent = nullptr);
 		void markPatternNodes(Term* t);
 		void deleteRec(Term* t);
 		static Term* find(Term* t);
 		static std::map<std::vector<int>, int> setupVariablesOrder(Term* t);
 		static void setupVariablesOrder(Term* t, std::vector<int>& pos, int& id, std::map<std::vector<int>, int>& res);
 		static void printVars(Term* t);
+		static void rewrite(Term* t, Term*& res);
 		Identity m_id;
 		std::vector<Identity> m_ids;
 		std::unordered_map<std::string, std::unique_ptr<Term>> m_storage;
