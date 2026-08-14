@@ -86,7 +86,12 @@ namespace NewTrs
 				Matcher matcher(id.variablesOrder);
 				if (matcher.match(id.lhs, trm.get()))
 				{
-					std::cout << "dsf";
+					matcher.genSub([id, &trm]()
+						{
+							std::cout << "===";
+							std::cout << id.lhs->termString << "->" << trm->termString << "\n";
+							Trs::printVars(id.lhs);
+						});
 				}
 			}
 		}
@@ -302,6 +307,19 @@ namespace NewTrs
 		}
 	}
 
+	void Trs::printVars(Term* t)
+	{
+		if (t->isVariable)
+		{
+			std::cout << t->termString << " = " << t->capture->termString << "\n";
+			return;
+		}
+		for (auto* ch : t->children)
+		{
+			printVars(ch);
+		}
+	}
+
 	void Trs::markPatternNodes(Term* t)
 	{
 		bool pat_temp = false;
@@ -479,6 +497,27 @@ namespace NewTrs
 	int Matcher::getVarId(const std::vector<int>& posPath)
 	{
 		return m_variablesOrder.find(posPath)->second;
+	}
+
+	void Matcher::genSub(Sub* sub, const std::function<void()>& callback, int depth)
+	{
+		for (auto& next : sub->next)
+		{
+			next.var->capture = next.subj;
+			if (depth == m_variablesOrder.size() - 1)
+			{
+				callback();
+			}
+			else
+			{
+				genSub(&next, callback, depth + 1);
+			}
+		}
+	}
+
+	void Matcher::genSub(const std::function<void()>& callback)
+	{
+		genSub(&m_subRoot, callback);
 	}
 
 }

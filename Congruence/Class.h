@@ -5,6 +5,8 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <functional>
+
 namespace NewTrs
 {
 	struct Term
@@ -18,6 +20,7 @@ namespace NewTrs
 		bool isVariable = false;
 		bool isPat = false;
 		bool deleteByCong = false;
+		Term* capture = nullptr;
 	};
 
 	class Parser
@@ -70,7 +73,9 @@ namespace NewTrs
 		bool addSub(Sub* sub, const Path& path, Term* var, Term* subj, int id);
 		bool pathsCompatible(const Path& p1, const Path& p2);
 		int getVarId(const std::vector<int>& posPath);
+		void genSub(const std::function<void()>& callback);
 	private:
+		void genSub(Sub* sub, const std::function<void()>& callback, int depth = 0);
 		Path m_path;
 		Sub m_subRoot;
 		const std::map<std::vector<int>, int>& m_variablesOrder;
@@ -92,6 +97,7 @@ namespace NewTrs
 		static Term* find(Term* t);
 		static std::map<std::vector<int>, int> setupVariablesOrder(Term* t);
 		static void setupVariablesOrder(Term* t, std::vector<int>& pos, int& id, std::map<std::vector<int>, int>& res);
+		static void printVars(Term* t);
 		Identity m_id;
 		std::vector<Identity> m_ids;
 		std::unordered_map<std::string, std::unique_ptr<Term>> m_storage;
