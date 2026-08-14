@@ -21,8 +21,9 @@ namespace NewTrs
 		bool isVariable = false;
 		bool isPat = false;
 		bool deleteByCong = false;
-		bool pendingCong = false;
 		Term* capture = nullptr;
+		//term is used in identities
+		bool persistent = false;
 	};
 
 	class Parser
@@ -93,11 +94,13 @@ namespace NewTrs
 		void remove(Term* t1);
 		void mergeCong(Term* t1, Term* t2);
 		void merge(Term* t1, Term* t2);
-		void compact(Term*& t, bool generated = false);
+		void compact(Term*& t);
 		void setupParent(Term* t, Term* parent = nullptr);
 		void markPatternNodes(Term* t);
 		void deleteRec(Term* t);
-		bool updateCongruence(Term* t);
+		//returns true if created new term(not equal and not congruent to other terms)
+		//this would imply that all parent terms also will be unique
+		bool updateCongruence(Term*& t);
 		void generateTermStr(Term* t);
 		static Term* find(Term* t);
 		static std::map<std::vector<int>, int> setupVariablesOrder(Term* t);
@@ -106,7 +109,7 @@ namespace NewTrs
 		static void rewrite(Term* t, Term*& res);
 		Identity m_id;
 		std::vector<Identity> m_ids;
-		std::unordered_map<std::string, std::unique_ptr<Term>> m_storage;
+		std::map<std::string, std::unique_ptr<Term>> m_storage;
 		std::unordered_set<Term*> m_bin;
 	};
 }

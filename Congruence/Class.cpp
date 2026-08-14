@@ -1,6 +1,6 @@
 #include "Class.h"
 #include <iostream>
-
+#include <chrono>
 namespace NewTrs
 {
 	void Trs::run()
@@ -25,8 +25,8 @@ namespace NewTrs
 		{"+(`a,`a)", "*(2,`a)"},
 		};
 
-		std::string lhs = "+(*(`v(a,b),+(`v(a,b),`v(b,c))),*(`v(b,c),+(`v(a,b),`v(b,c))))";//*(a*(a,b),b)
-		std::string rhs = "p(+(*(a,c),*(d,f)),2)";//(e+a)^2
+		std::string lhs = "p(+(`a,`a),2)";//*(a*(a,b),b)
+		std::string rhs = "p(+(*(a,c),*(c,a)),2)";//(e+a)^2
 
 		std::cout << "Find solution: \n";
 		std::cout << lhs << " = " << rhs << "\n\n";
@@ -42,8 +42,8 @@ namespace NewTrs
 			Parser pr(lhs);
 			pr.parse();
 			compact(pr.m_current_term);
-			setupParent(pr.m_current_term);
 			m_id.lhs = pr.m_current_term;
+			m_id.lhs->persistent = true;
 			m_id.variablesOrder = setupVariablesOrder(m_id.lhs);
 			markPatternNodes(m_id.lhs);
 		}
@@ -52,8 +52,8 @@ namespace NewTrs
 			Parser pr(rhs);
 			pr.parse();
 			compact(pr.m_current_term);
-			setupParent(pr.m_current_term);
 			m_id.rhs = pr.m_current_term;
+			m_id.rhs->persistent = true;
 		}
 
 		for (auto& id : identities)
@@ -63,8 +63,8 @@ namespace NewTrs
 				Parser pr(id.lhs);
 				pr.parse();
 				compact(pr.m_current_term);
-				setupParent(pr.m_current_term);
 				newId.lhs = pr.m_current_term;
+				newId.lhs->persistent = true;
 				newId.variablesOrder = setupVariablesOrder(newId.lhs);
 				markPatternNodes(newId.lhs);
 			}
@@ -73,8 +73,8 @@ namespace NewTrs
 				Parser pr(id.rhs);
 				pr.parse();
 				compact(pr.m_current_term);
-				setupParent(pr.m_current_term);
 				newId.rhs = pr.m_current_term;
+				newId.rhs->persistent = true;
 				markPatternNodes(newId.rhs);
 			}
 		}
@@ -83,10 +83,10 @@ namespace NewTrs
 			Term* lhs = nullptr;
 			Term* rhs = nullptr;
 		};
-		std::vector<NewIdentity> newIdentities;
-
-		for (int i = 0; i < 30; ++i)
+		auto start = std::chrono::high_resolution_clock::now();
+		for (int i = 0; i < 5; ++i)
 		{
+			std::vector<NewIdentity> newIdentities;
 			for (auto& id : m_ids)
 			{
 				for (auto& [str, trm] : m_storage)
@@ -100,9 +100,9 @@ namespace NewTrs
 					{
 						matcher.genSub([this, &newIdentities, &id, &trm]()
 							{
-								std::cout << "===";
+								/*std::cout << "===";
 								std::cout << id.lhs->termString << "->" << trm->termString << "\n";
-								Trs::printVars(id.lhs);
+								Trs::printVars(id.lhs);*/
 								Term* newTerm = nullptr;
 								Trs::rewrite(id.rhs, newTerm);
 								newIdentities.emplace_back(trm.get(), newTerm);
@@ -114,34 +114,55 @@ namespace NewTrs
 			for (auto& newId : newIdentities)
 			{
 				generateTermStr(newId.rhs);
-				if (m_storage.contains(newId.rhs->termString))
-				{
-					deleteRec(newId.rhs);
-					continue;
-				}
-				compact(newId.rhs, true);
+				updateCongruence(newId.rhs);
 				setupParent(newId.rhs);
-				if (updateCongruence(newId.rhs))
+				if (find(newId.lhs) != find(newId.rhs))
 				{
-					for (Term* t : m_bin)
-					{
-						remove(t);
-					}
-					m_bin.clear();
-					continue;
-				}
-				else
-				{
-					merge(newId.rhs, newId.lhs);
-					for (Term* t : m_bin)
-					{
-						remove(t);
-					}
-					m_bin.clear();
+					merge(newId.lhs, newId.rhs);
 				}
 			}
-			std::cout << "sdf";
+			for (Term* t : m_bin)
+			{
+				remove(t);
+			}
+			m_bin.clear();
+			{
+				Matcher matcher(m_id.variablesOrder);
+				if (matcher.match(m_id.lhs, m_id.rhs))
+				{
 
+					std::cout << "SUCCEDED\n";
+					auto end = std::chrono::high_resolution_clock::now();
+
+					auto duration =
+						std::chrono::duration<double, std::milli>(end - start);
+
+					std::cout << duration.count() << " ms\n";
+					matcher.genSub([this]()
+						{
+							std::cout << "===";
+							std::cout << m_id.lhs->termString << "->" << m_id.rhs->termString << "\n";
+							Trs::printVars(m_id.lhs);
+
+							//Term* newTerm = nullptr;
+							//Trs::rewrite(id.rhs, newTerm);
+							//newIdentities.emplace_back(trm.get(), newTerm);
+						});
+					return;
+				}
+			}
+
+		}
+		for (auto& el : m_storage)
+		{
+			if (el.second->eRep == el.second.get())
+			{
+				std::cout << "-------------------\n";
+				for (auto* rep : el.second->eReps)
+				{
+					std::cout << el.second->termString << "=== " << rep->termString << "\n";
+				}
+			}
 		}
 
 	}
@@ -215,6 +236,10 @@ namespace NewTrs
 
 	void Trs::mergeCong(Term* t1, Term* t2)
 	{
+		if (t1->persistent)
+		{
+			std::swap(t1, t2);
+		}
 		t1->deleteByCong = true;
 		m_bin.insert(t1);
 		if (find(t1) == find(t2))
@@ -271,20 +296,17 @@ namespace NewTrs
 		}
 	}
 
-	void Trs::compact(Term*& t, bool generated)
+	void Trs::compact(Term*& t)
 	{
 		if (t->stored)
 		{
 			return;
 		}
-		for (auto*& ch : t->children)
-		{
-			compact(ch);
-		}
 		auto [it, inserted] = m_storage.emplace(t->termString, t);
 		if (!inserted)
 		{
-			delete t;
+			it->second->parents.merge(t->parents);
+			deleteRec(t);
 			t = it->second.get();
 			//element already in the map, therefore its children are as well
 			return;
@@ -292,7 +314,10 @@ namespace NewTrs
 		else
 		{
 			it->second->stored = true;
-			it->second->pendingCong = generated;
+			for (auto*& ch : t->children)
+			{
+				compact(ch);
+			}
 		}
 	}
 
@@ -366,6 +391,7 @@ namespace NewTrs
 		res->label = t->label;
 		res->eRep = res;
 		res->eReps.push_back(res);
+
 		for (Term* ch : t->children)
 		{
 			Term*& newCh = res->children.emplace_back();
@@ -405,35 +431,55 @@ namespace NewTrs
 		delete t;
 	}
 
-	bool Trs::updateCongruence(Term* t)
+	bool Trs::updateCongruence(Term*& t)
 	{
-		if (!t->pendingCong)
+		if (t->stored)
 		{
 			return false;
 		}
-		t->pendingCong = false;
-		if (t->children.empty())
+		bool createdNewTerm = false;
+		for (Term*& ch : t->children)
 		{
-			return false;
-		}
-		for (auto ch : t->children)
-		{
-			updateCongruence(ch);
-		}
-		//if congruence fails for last t->child, then it fails for all children
-		auto pars = find(t->children.back())->parents;
-		for (auto par : pars)
-		{
-			if (find(t) != find(par) && cong(t, par))
+			if (updateCongruence(ch))
 			{
-				//if found congruent parent, this means that this parent congruent to other parents
-				// and there is no need to continue
-				t->deleteByCong = true;
-				m_bin.insert(t);
-				return true;
+				t->stored = true;
+				m_storage.emplace(t->termString, t);
+				createdNewTerm = true;
 			}
 		}
-		return false;
+		if (createdNewTerm)
+		{
+			return true;
+		}
+
+		auto found = m_storage.find(t->termString);
+		if (found != m_storage.end())
+		{
+			delete t;
+			t = found->second.get();
+			//element already in the map, therefore its children are as well
+			return false;
+		}
+		if (t->children.empty())
+		{
+			t->stored = true;
+			m_storage.emplace(t->termString, t);
+			return true;
+		}
+		auto* ch = t->children.back();
+		auto& siblings = ch->parents;
+		for (Term* sib : siblings)
+		{
+			if (cong(sib, t))
+			{
+				delete t;
+				t = sib;
+				return false;
+			}
+		}
+		t->stored = true;
+		m_storage.emplace(t->termString, t);
+		return true;
 	}
 
 	inline void Trs::generateTermStr(Term* t)
@@ -448,11 +494,12 @@ namespace NewTrs
 			return;
 		}
 		t->termString += "(";
-		for (auto* ch : t->children)
+		for (int i = 0; i < t->children.size(); ++i)
 		{
+			auto* ch = t->children[i];
 			generateTermStr(ch);
 			t->termString += ch->termString;
-			if (ch != t->children.back())
+			if (i != t->children.size() - 1)
 			{
 				t->termString += ',';
 			}
@@ -538,29 +585,28 @@ namespace NewTrs
 			return res;
 		}
 
-		bool hasSucceded = false;
 		auto& reps = Trs::find(subj)->eReps;
+		bool repSucceded = false;
 		for (auto* rep : reps)
 		{
 			if (pat->label != rep->label)
 			{
 				continue;
 			}
-			bool patSucceded = true;
+			bool result = true;
 			for (int i = 0; i < pat->children.size(); ++i)
 			{
 				if (!match(pat->children[i], rep->children[i], i))
 				{
-					patSucceded = false;
-					break;
+					result = false;
 				}
 			}
-			hasSucceded |= patSucceded;
+			repSucceded |= result;
 			m_path.repPath.back()++;
 		}
 		m_path.posPath.pop_back();
 		m_path.repPath.pop_back();
-		return hasSucceded;
+		return repSucceded;
 	}
 
 	bool Matcher::addSub(Sub* sub, const Path& path, Term* var, Term* subj, int id)
@@ -594,7 +640,7 @@ namespace NewTrs
 		{
 			if (p1.posPath[i] == p2.posPath[i])
 			{
-				if (p1.repPath[i] != p1.repPath[i])
+				if (p1.repPath[i] != p2.repPath[i])
 				{
 					return false;
 				}
