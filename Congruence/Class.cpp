@@ -83,10 +83,6 @@ namespace NewTrs
 				{
 					continue;
 				}
-				if (id.lhs->termString == "+(`a,`b)" && trm->termString == "+(*(a,c),*(d,f))")
-				{
-					std::cout << "sdf";
-				}
 				Matcher matcher(id.variablesOrder);
 				if (matcher.match(id.lhs, trm.get()))
 				{
@@ -440,7 +436,7 @@ namespace NewTrs
 	{
 		if (id == 0)
 		{
-			auto newSub = sub->next.emplace_back();
+			auto& newSub = sub->next.emplace_back();
 			newSub.path = path;
 			newSub.subj = subj;
 			newSub.var = var;
