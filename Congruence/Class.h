@@ -21,6 +21,7 @@ namespace NewTrs
 		bool isVariable = false;
 		bool isPat = false;
 		bool deleteByCong = false;
+		bool pendingCong = false;
 		Term* capture = nullptr;
 	};
 
@@ -45,6 +46,7 @@ namespace NewTrs
 	struct Identity
 	{
 		std::map<std::vector<int>, int> variablesOrder;
+		std::unordered_set<Term*> variables;
 		Term* lhs = nullptr;
 		Term* rhs = nullptr;
 	};
@@ -90,12 +92,13 @@ namespace NewTrs
 		void unionTerms(Term* t1, Term* t2);
 		void remove(Term* t1);
 		void mergeCong(Term* t1, Term* t2);
-		void clearCongruent(Term*& tRep);
 		void merge(Term* t1, Term* t2);
-		void compact(Term*& t);
+		void compact(Term*& t, bool generated = false);
 		void setupParent(Term* t, Term* parent = nullptr);
 		void markPatternNodes(Term* t);
 		void deleteRec(Term* t);
+		bool updateCongruence(Term* t);
+		void generateTermStr(Term* t);
 		static Term* find(Term* t);
 		static std::map<std::vector<int>, int> setupVariablesOrder(Term* t);
 		static void setupVariablesOrder(Term* t, std::vector<int>& pos, int& id, std::map<std::vector<int>, int>& res);
@@ -104,6 +107,6 @@ namespace NewTrs
 		Identity m_id;
 		std::vector<Identity> m_ids;
 		std::unordered_map<std::string, std::unique_ptr<Term>> m_storage;
-		std::vector<Term*> m_bin;
+		std::unordered_set<Term*> m_bin;
 	};
 }

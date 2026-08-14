@@ -78,29 +78,71 @@ namespace NewTrs
 				markPatternNodes(newId.rhs);
 			}
 		}
-
-		for (auto& id : m_ids)
+		struct NewIdentity
 		{
-			for (auto& [str, trm] : m_storage)
+			Term* lhs = nullptr;
+			Term* rhs = nullptr;
+		};
+		std::vector<NewIdentity> newIdentities;
+
+		for (int i = 0; i < 30; ++i)
+		{
+			for (auto& id : m_ids)
 			{
-				if (trm->isPat)
+				for (auto& [str, trm] : m_storage)
 				{
+					if (trm->isPat)
+					{
+						continue;
+					}
+					Matcher matcher(id.variablesOrder);
+					if (matcher.match(id.lhs, trm.get()))
+					{
+						matcher.genSub([this, &newIdentities, &id, &trm]()
+							{
+								std::cout << "===";
+								std::cout << id.lhs->termString << "->" << trm->termString << "\n";
+								Trs::printVars(id.lhs);
+								Term* newTerm = nullptr;
+								Trs::rewrite(id.rhs, newTerm);
+								newIdentities.emplace_back(trm.get(), newTerm);
+							});
+					}
+				}
+
+			}
+			for (auto& newId : newIdentities)
+			{
+				generateTermStr(newId.rhs);
+				if (m_storage.contains(newId.rhs->termString))
+				{
+					deleteRec(newId.rhs);
 					continue;
 				}
-				Matcher matcher(id.variablesOrder);
-				if (matcher.match(id.lhs, trm.get()))
+				compact(newId.rhs, true);
+				setupParent(newId.rhs);
+				if (updateCongruence(newId.rhs))
 				{
-					matcher.genSub([id, &trm]()
-						{
-							std::cout << "===";
-							std::cout << id.lhs->termString << "->" << trm->termString << "\n";
-							Trs::printVars(id.lhs);
-							//Trs::rewrite(id.)
-						});
+					for (Term* t : m_bin)
+					{
+						remove(t);
+					}
+					m_bin.clear();
+					continue;
+				}
+				else
+				{
+					merge(newId.rhs, newId.lhs);
+					for (Term* t : m_bin)
+					{
+						remove(t);
+					}
+					m_bin.clear();
 				}
 			}
-		}
+			std::cout << "sdf";
 
+		}
 
 	}
 	bool Trs::cong(Term* t1, Term* t2)
@@ -173,8 +215,8 @@ namespace NewTrs
 
 	void Trs::mergeCong(Term* t1, Term* t2)
 	{
-		t2->deleteByCong = true;
-		m_bin.push_back(t2);
+		t1->deleteByCong = true;
+		m_bin.insert(t1);
 		if (find(t1) == find(t2))
 		{
 			return;
@@ -200,37 +242,6 @@ namespace NewTrs
 				}
 			}
 		}
-	}
-
-	void Trs::clearCongruent(Term*& tRep)
-	{
-		tRep = find(tRep);
-		std::vector<Term*> termsToRemove;
-		for (auto itLeft = tRep->eReps.begin(); itLeft != tRep->eReps.end(); ++itLeft)
-		{
-			auto itRight = itLeft;
-			++itRight;
-
-			for (; itRight != tRep->eReps.end(); ++itRight)
-			{
-				Term* tLeft = *itLeft;
-				Term* tRight = *itRight;
-
-				if (cong(tLeft, tRight))
-				{
-					termsToRemove.push_back(tLeft);
-				}
-			}
-		}
-		for (Term* t : termsToRemove)
-		{
-			if (t == tRep)
-			{
-				tRep = nullptr;
-			}
-			remove(t);
-		}
-
 	}
 
 	void Trs::merge(Term* t1, Term* t2)
@@ -260,7 +271,7 @@ namespace NewTrs
 		}
 	}
 
-	void Trs::compact(Term*& t)
+	void Trs::compact(Term*& t, bool generated)
 	{
 		if (t->stored)
 		{
@@ -281,6 +292,7 @@ namespace NewTrs
 		else
 		{
 			it->second->stored = true;
+			it->second->pendingCong = generated;
 		}
 	}
 
@@ -382,13 +394,73 @@ namespace NewTrs
 
 	void Trs::deleteRec(Term* t)
 	{
+		if (t->stored)
+		{
+			return;
+		}
 		for (auto* ch : t->children)
 		{
 			deleteRec(ch);
 		}
 		delete t;
 	}
-	inline void Parser::parse()
+
+	bool Trs::updateCongruence(Term* t)
+	{
+		if (!t->pendingCong)
+		{
+			return false;
+		}
+		t->pendingCong = false;
+		if (t->children.empty())
+		{
+			return false;
+		}
+		for (auto ch : t->children)
+		{
+			updateCongruence(ch);
+		}
+		//if congruence fails for last t->child, then it fails for all children
+		auto pars = find(t->children.back())->parents;
+		for (auto par : pars)
+		{
+			if (find(t) != find(par) && cong(t, par))
+			{
+				//if found congruent parent, this means that this parent congruent to other parents
+				// and there is no need to continue
+				t->deleteByCong = true;
+				m_bin.insert(t);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	inline void Trs::generateTermStr(Term* t)
+	{
+		if (!t->termString.empty())
+		{
+			return;
+		}
+		t->termString = t->label;
+		if (t->children.empty())
+		{
+			return;
+		}
+		t->termString += "(";
+		for (auto* ch : t->children)
+		{
+			generateTermStr(ch);
+			t->termString += ch->termString;
+			if (ch != t->children.back())
+			{
+				t->termString += ',';
+			}
+		}
+		t->termString += ")";
+	}
+
+	void Parser::parse()
 	{
 		while (m_pos != m_str.size())
 		{
@@ -434,7 +506,7 @@ namespace NewTrs
 			++m_pos;
 		}
 	}
-	inline void Parser::consumeTermName()
+	void Parser::consumeTermName()
 	{
 		int i = m_pos;
 		for (; i < m_str.size(); ++i)
