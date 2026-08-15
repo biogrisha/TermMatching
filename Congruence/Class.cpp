@@ -26,7 +26,7 @@ namespace NewTrs
 		};
 
 		std::string lhs = "p(+(`a,`a),2)";//*(a*(a,b),b)
-		std::string rhs = "p(+(*(a,c),*(c,a)),2)";//(e+a)^2
+		std::string rhs = "+(p(*(a,+(b,c)),2),+(p(*(a,+(b,c)),2),*(2,*(*(+(b,c),a),*(a,+(c,b))))))";//(e+a)^2
 
 		std::cout << "Find solution: \n";
 		std::cout << lhs << " = " << rhs << "\n\n";
@@ -46,6 +46,7 @@ namespace NewTrs
 			m_id.lhs->persistent = true;
 			m_id.variablesOrder = setupVariablesOrder(m_id.lhs);
 			markPatternNodes(m_id.lhs);
+			initCompOrder(m_id.lhs);
 		}
 
 		{
@@ -67,6 +68,7 @@ namespace NewTrs
 				newId.lhs->persistent = true;
 				newId.variablesOrder = setupVariablesOrder(newId.lhs);
 				markPatternNodes(newId.lhs);
+				initCompOrder(newId.lhs);
 			}
 
 			{
@@ -84,7 +86,7 @@ namespace NewTrs
 			Term* rhs = nullptr;
 		};
 		auto start = std::chrono::high_resolution_clock::now();
-		for (int i = 0; i < 5; ++i)
+		for (int i = 0; i < 7; ++i)
 		{
 			std::vector<NewIdentity> newIdentities;
 			for (auto& id : m_ids)
@@ -95,14 +97,15 @@ namespace NewTrs
 					{
 						continue;
 					}
+					if (trm->eRep != trm.get())
+					{
+						continue;
+					}
 					Matcher matcher(id.variablesOrder);
 					if (matcher.match(id.lhs, trm.get()))
 					{
 						matcher.genSub([this, &newIdentities, &id, &trm]()
 							{
-								/*std::cout << "===";
-								std::cout << id.lhs->termString << "->" << trm->termString << "\n";
-								Trs::printVars(id.lhs);*/
 								Term* newTerm = nullptr;
 								Trs::rewrite(id.rhs, newTerm);
 								newIdentities.emplace_back(trm.get(), newTerm);
@@ -121,11 +124,14 @@ namespace NewTrs
 					merge(newId.lhs, newId.rhs);
 				}
 			}
-			for (Term* t : m_bin)
+			for (auto* t : m_cong)
 			{
-				remove(t);
+				if (find(t)->eReps.size() > 1)
+				{
+					remove(t);
+				}
 			}
-			m_bin.clear();
+			m_cong.clear();
 			{
 				Matcher matcher(m_id.variablesOrder);
 				if (matcher.match(m_id.lhs, m_id.rhs))
@@ -148,6 +154,24 @@ namespace NewTrs
 							//Trs::rewrite(id.rhs, newTerm);
 							//newIdentities.emplace_back(trm.get(), newTerm);
 						});
+
+					for (auto& el : m_storage)
+					{
+						if (el.second->eRep == el.second.get())
+						{
+							auto& reps = el.second->eReps;
+							for (int i = 0; i < reps.size(); ++i)
+							{
+								for (int j = i + 1; j < reps.size(); ++j)
+								{
+									if (cong(reps[i], reps[j]))
+									{
+										std::cout << reps[i]->termString << "=== " << reps[j]->termString << "\n";
+									}
+								}
+							}
+						}
+					}
 					return;
 				}
 			}
@@ -157,10 +181,16 @@ namespace NewTrs
 		{
 			if (el.second->eRep == el.second.get())
 			{
-				std::cout << "-------------------\n";
-				for (auto* rep : el.second->eReps)
+				auto& reps = el.second->eReps;
+				for (int i = 0; i < reps.size(); ++i)
 				{
-					std::cout << el.second->termString << "=== " << rep->termString << "\n";
+					for (int j = i + 1; j < reps.size(); ++j)
+					{
+						if (cong(reps[i], reps[j]))
+						{
+							std::cout << reps[i]->termString << "=== " << reps[j]->termString << "\n";
+						}
+					}
 				}
 			}
 		}
@@ -214,6 +244,14 @@ namespace NewTrs
 			newTop->parents = std::move(tTop->parents);
 			tTop = newTop;
 		}
+		else
+		{
+			for (Term* rep : tTop->eReps)
+			{
+				//set new top for reps
+				rep->eRep = tTop;
+			}
+		}
 
 		//replace itself in parents with the newTop
 		for (Term* parent : tTop->parents)
@@ -236,12 +274,22 @@ namespace NewTrs
 
 	void Trs::mergeCong(Term* t1, Term* t2)
 	{
-		if (t1->persistent)
+		//collect congruent
+		if (t1->persistent && !t2->persistent)
 		{
-			std::swap(t1, t2);
+			m_cong.insert(t2);
 		}
-		t1->deleteByCong = true;
-		m_bin.insert(t1);
+		else if (!t1->persistent && t2->persistent)
+		{
+			m_cong.insert(t1);
+		}
+		else if (!t1->persistent)
+		{
+			m_cong.insert(t1);
+		}
+
+		//if they are congruent but in the same e-class
+		//all their parents already were congruent at this point
 		if (find(t1) == find(t2))
 		{
 			return;
@@ -251,17 +299,9 @@ namespace NewTrs
 		unionTerms(t1, t2);
 		for (auto* parent1 : parents1)
 		{
-			if (parent1->deleteByCong)
-			{
-				continue;
-			}
 			for (auto* parent2 : parents2)
 			{
-				if (parent1->deleteByCong || parent2->deleteByCong)
-				{
-					continue;
-				}
-				if (find(parent1) != find(parent2) && cong(parent1, parent2))
+				if (parent1 != parent2 && cong(parent1, parent2))
 				{
 					mergeCong(parent1, parent2);
 				}
@@ -278,16 +318,8 @@ namespace NewTrs
 
 		for (auto* parent1 : parents1)
 		{
-			if (parent1->deleteByCong)
-			{
-				continue;
-			}
 			for (auto* parent2 : parents2)
 			{
-				if (parent1->deleteByCong || parent2->deleteByCong)
-				{
-					continue;
-				}
 				if (parent1 != parent2 && cong(parent1, parent2))
 				{
 					mergeCong(parent1, parent2);
@@ -467,7 +499,7 @@ namespace NewTrs
 			return true;
 		}
 		auto* ch = t->children.back();
-		auto& siblings = ch->parents;
+		auto& siblings = find(ch)->parents;
 		for (Term* sib : siblings)
 		{
 			if (cong(sib, t))
@@ -505,6 +537,36 @@ namespace NewTrs
 			}
 		}
 		t->termString += ")";
+	}
+
+	void Trs::initCompOrder(Term* t)
+	{
+		for (Term* ch : t->children)
+		{
+			initCompOrder(ch);
+		}
+
+		for (int i = 0; i < t->children.size(); ++i)
+		{
+			if (!t->children[i]->isPat)
+			{
+				t->compOrder.push_back(i);
+			}
+		}
+		for (int i = 0; i < t->children.size(); ++i)
+		{
+			if (t->children[i]->isVariable)
+			{
+				t->compOrder.push_back(i);
+			}
+		}
+		for (int i = 0; i < t->children.size(); ++i)
+		{
+			if (t->children[i]->isPat && !t->children[i]->isVariable)
+			{
+				t->compOrder.push_back(i);
+			}
+		}
 	}
 
 	void Parser::parse()
@@ -594,13 +656,21 @@ namespace NewTrs
 				continue;
 			}
 			bool result = true;
-			for (int i = 0; i < pat->children.size(); ++i)
+			auto& compOrder = pat->compOrder;
+			for (int i = 0; i < compOrder.size(); ++i)
+			{
+				if (!match(pat->children[compOrder[i]], rep->children[compOrder[i]], compOrder[i]))
+				{
+					result = false;
+				}
+			}
+			/*for (int i = 0; i < pat->children.size(); ++i)
 			{
 				if (!match(pat->children[i], rep->children[i], i))
 				{
 					result = false;
 				}
-			}
+			}*/
 			repSucceded |= result;
 			m_path.repPath.back()++;
 		}
@@ -621,7 +691,7 @@ namespace NewTrs
 		}
 		for (auto& next : sub->next)
 		{
-			if (next.var == var && next.subj != subj)
+			if (next.var == var && Trs::find(next.subj) != Trs::find(subj))
 			{
 				continue;
 			}

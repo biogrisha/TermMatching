@@ -24,6 +24,7 @@ namespace NewTrs
 		Term* capture = nullptr;
 		//term is used in identities
 		bool persistent = false;
+		std::vector<int> compOrder;
 	};
 
 	class Parser
@@ -102,6 +103,7 @@ namespace NewTrs
 		//this would imply that all parent terms also will be unique
 		bool updateCongruence(Term*& t);
 		void generateTermStr(Term* t);
+		void initCompOrder(Term* t);
 		static Term* find(Term* t);
 		static std::map<std::vector<int>, int> setupVariablesOrder(Term* t);
 		static void setupVariablesOrder(Term* t, std::vector<int>& pos, int& id, std::map<std::vector<int>, int>& res);
@@ -110,6 +112,7 @@ namespace NewTrs
 		Identity m_id;
 		std::vector<Identity> m_ids;
 		std::map<std::string, std::unique_ptr<Term>> m_storage;
-		std::unordered_set<Term*> m_bin;
+
+		std::unordered_set<Term*> m_cong;
 	};
 }

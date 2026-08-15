@@ -775,8 +775,8 @@ int main()
 		{"+(`a,`a)", "*(2,`a)"},
 	};
 
-	std::string lhs = "+(*(`v(a,b),+(`v(a,b),`v(b,c))),*(`v(b,c),+(`v(a,b),`v(b,c))))";//*(a*(a,b),b)
-	std::string rhs = "p(+(*(a,c),*(d,f)),2)";//(e+a)^2
+	std::string lhs = "p(+(`a,`a),2)";//*(a*(a,b),b)
+	std::string rhs = "+(p(*(a,b),2),+(p(*(a,b),2),*(2,*(*(a,b),*(a,b)))))";//(e+a)^2
 
 	std::cout << "Find solution: \n";
 	std::cout << lhs << " = " << rhs << "\n\n";
@@ -893,7 +893,7 @@ int main()
 			auto end = std::chrono::high_resolution_clock::now();
 
 			auto duration =
-				std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+				std::chrono::duration<double, std::milli>(end - start);
 
 			std::cout << duration.count() << " ms\n";
 			for (auto& arg : mc.args)
