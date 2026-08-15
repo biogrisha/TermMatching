@@ -44,9 +44,9 @@ namespace NewTrs
 			compact(pr.m_current_term);
 			m_id.lhs = pr.m_current_term;
 			m_id.lhs->persistent = true;
-			m_id.variablesOrder = setupVariablesOrder(m_id.lhs);
 			markPatternNodes(m_id.lhs);
 			initCompOrder(m_id.lhs);
+			m_id.variablesOrder = setupVariablesOrder(m_id.lhs);
 		}
 
 		{
@@ -66,9 +66,9 @@ namespace NewTrs
 				compact(pr.m_current_term);
 				newId.lhs = pr.m_current_term;
 				newId.lhs->persistent = true;
-				newId.variablesOrder = setupVariablesOrder(newId.lhs);
 				markPatternNodes(newId.lhs);
 				initCompOrder(newId.lhs);
+				newId.variablesOrder = setupVariablesOrder(newId.lhs);
 			}
 
 			{
@@ -109,6 +109,9 @@ namespace NewTrs
 								Term* newTerm = nullptr;
 								Trs::rewrite(id.rhs, newTerm);
 								newIdentities.emplace_back(trm.get(), newTerm);
+								/*std::cout << "===";
+								std::cout << id.lhs->termString << "->" << trm->termString << "\n";
+								Trs::printVars(id.lhs);*/
 							});
 					}
 				}
@@ -391,10 +394,10 @@ namespace NewTrs
 			++id;
 			return;
 		}
-		for (int i = 0; i < t->children.size(); ++i)
+		for (int i = 0; i < t->compOrder.size(); ++i)
 		{
-			pos.push_back(i);
-			setupVariablesOrder(t->children[i], pos, id, res);
+			pos.push_back(t->compOrder[i]);
+			setupVariablesOrder(t->children[t->compOrder[i]], pos, id, res);
 			pos.pop_back();
 		}
 	}
@@ -546,6 +549,8 @@ namespace NewTrs
 			initCompOrder(ch);
 		}
 
+		t->compOrder.clear();
+
 		for (int i = 0; i < t->children.size(); ++i)
 		{
 			if (!t->children[i]->isPat)
@@ -664,13 +669,6 @@ namespace NewTrs
 					result = false;
 				}
 			}
-			/*for (int i = 0; i < pat->children.size(); ++i)
-			{
-				if (!match(pat->children[i], rep->children[i], i))
-				{
-					result = false;
-				}
-			}*/
 			repSucceded |= result;
 			m_path.repPath.back()++;
 		}
