@@ -24,6 +24,7 @@ namespace NewTrs
 		Term* capture = nullptr;
 		//term is used in identities
 		bool persistent = false;
+		bool congProtect = false;
 		std::vector<int> compOrder;
 	};
 

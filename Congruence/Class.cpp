@@ -129,10 +129,7 @@ namespace NewTrs
 			}
 			for (auto* t : m_cong)
 			{
-				if (find(t)->eReps.size() > 1)
-				{
-					remove(t);
-				}
+				remove(t);
 			}
 			m_cong.clear();
 			{
@@ -280,15 +277,34 @@ namespace NewTrs
 		//collect congruent
 		if (t1->persistent && !t2->persistent)
 		{
+			t2->congProtect = false;
 			m_cong.insert(t2);
 		}
 		else if (!t1->persistent && t2->persistent)
 		{
+			t1->congProtect = false;
 			m_cong.insert(t1);
 		}
 		else if (!t1->persistent)
 		{
-			m_cong.insert(t1);
+			if (t1->congProtect && !t2->congProtect)
+			{
+				m_cong.insert(t2);
+			}
+			else if (t2->congProtect && !t1->congProtect)
+			{
+				m_cong.insert(t1);
+			}
+			else if (t2->congProtect && t1->congProtect)
+			{
+				t1->congProtect = false;
+				m_cong.insert(t1);
+			}
+			else
+			{
+				t1->congProtect = true;
+				m_cong.insert(t2);
+			}
 		}
 
 		//if they are congruent but in the same e-class
